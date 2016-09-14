@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import sys
 param = sys.argv
-keyword = param[1]
+keyword = str(param[1]).lower()#komoji ni suru noda!
 input = "word2vec.data"
 
 from gensim.models import word2vec

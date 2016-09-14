@@ -1,0 +1,850 @@
+[
+  {
+    "rendered_body": "はじめに洪水時の貯水池水位追跡（英語では flood routing）は，洪水が貯水池に流入した時，ダムからの放流量を考慮しながら，水位がどのように変化するかを追跡する解析です．特に湛水面積・容量の大きな貯水池では，洪水流入時の貯水池の貯留効果が大きいため，ある程度の貯水池の水位上昇は伴いますが，流入洪水波形のピークをカットできるとともに，合理的な洪水吐設計を行うことができるため，重要な解析となってきます．また繰り返し計算を伴う解析であるため，プログラム言語による処理が適していると考えています．筆者も，色々なケースでこの解析を行ってきましたが，プログラムの簡単な解説を行いながら，ここにアップしてみることにしました．理論貯水池への貯留量は，流入量と流出量の差に支配され，ある時間間隔$\\delta t$に対し，この関係は，以下のとおり表現できる．$$\\delta s=q_{i}\\cdot \\delta t - q_{o}\\cdot \\delta t$$$\\delta t$ : 時間間隔$\\delta s$ : $\\delta t$時間での貯水池への貯留量$q_i$ : $\\delta t$時間内の平均流入量$q_o$ : $\\delta t$時間内の平均流出量上式を解く上で，以下の３つの特性値が必要となる．貯水池の水位ー容量曲線貯水池への流入量時刻歴：通常は洪水のハイドログラフ貯水池からの流出特性：通常は洪水吐の水位ー流出量関係解析手順は以下のとおり．(step-0) 初期値として，初期貯水池水位標高，初期流入量を与える．初期水位標高により，貯水池水位ー容量曲線から初期貯水池貯留量が算定できる．(step-1) $\\delta t$時間後の流入量を入力するとともに，水位上昇量（貯水池水位）を仮定し流出量の計算を行う．(step-2) $\\delta t$時間前の流入量と流出量を用い，$\\delta t$時間内の流入体積と流出体積を求める．この流入体積と流出体積の差分が，$\\delta t$時間内の貯水池への貯留量増分となる．(step-3) 貯留量増分に前回貯水池貯留量を加えることにより，最新の貯水池貯留量が計算され，また貯水池水位ー容量曲線より貯水池水位も計算できる．(step-4) (step-1)において水位上昇量を仮定しているので，(step-3)で求めた貯水池水位と(step-1)で仮定した貯水池水位を比較し，これらの差分が許容誤差以内になるまで，(step-1)から(step-4)の過程を繰り返す．なお，通常の場合，洪水初期は貯水池水位および流出量は上昇していき，流入量のピークを過ぎても貯水池水位および流出量は上昇し続けるが，ある時点から水位および流出量は減少し始める．設計上は，この水位および流出量のピークを捉えれば良いわけであるが，解析としてグラフの体裁を考えると水位減少時の挙動も追跡してあるほうがかっこいいので，水位降下時を追跡できるルーチンもプログラムに組み込んでおく．解析事例貯水池は発電用であり，ゲートを有している．初期水位はel.130mであり，ゲート部越流頂標高はel.114mとしている．事例では，ピーク流量12500m3/sの洪水波形が流入した時の最高水位および流出量を追跡している．ゲートを全開にした時，水位標高el.130mだとすれば越流量は約4300m3/sであるため，流入量が4300m3/s以下の場合はゲート操作により貯水位をel.130mに保ち，それ以上となったらゲート全開の条件で自由越流させることにしている．また発電用貯水池なので，洪水ピークが去り貯水位低下が始まってからは，水位標高がel.130mに達する直前からゲート操作を開始し，貯水位をel.130mに保つ運用をするように設定している．すなわち貯水位el.130mとなってからは流入量＝放流量となることとしている．プログラムプログラムは，解析用と作図用に分けている．以下は実行用スクリプトpython3 py_eng_floodrm.py hv1m.txt hydro1m.txt out_flood.txtpython3 py_eng_fig_floodrm.py解析プログラム入力データ：貯水池h-vデータ１行目は貯水池容量に乗じる係数（ここでは百万m3）．２行目以降は，１列目が標高，２列めが累計容量を示す．hv1m.txt1e6 60.0         0.000 61.0         0.045 62.0         0.187 63.0         0.437..........入力データ：洪水波形（ハイドログラフ）１行目１列目は初期貯水池水位標高（ここでは130m）．１行目２列目は常時放流量（ここでは０）．２行目以降は，１列目が時刻，２列目が流入量（m3/s）hydro1m.txt130.0 0  0.0           118  1.0           205  2.0           289  3.0           371  4.0           454  5.0           537..........解析プログラム関数 def sp(elv,hmax): および def spq(elv,qqin,hmax,qref,elini): は洪水吐きの特性を示すものであり，基本的には色々な貯水池のタイプに合わせて，この２つを書き換えながら使いまわしている．（洪水吐の特性によっては本ルーチンも書き換える必要あり）py_eng_floodrm.py# -*- coding: utf-8 -*-import sysfrom math import *def sp(elv,hmax):    # head-discharge relationship of spillway    elcr=116.0    b=11.5    n=4    x=0.1387    cd=1.971+0.498*x+6.63*x*x    a=(1.6-cd)/(cd-3.2)    h=elv-elcr    q=0.0    if 0.0&lt;h:        hd=139.0-elcr        c=1.6*(1.0+2.0*a*h/hd)/(1.0+a*h/hd)        kp=0.112703962703963*(h/hd)**2-0.237885780885781*(h/hd)+0.126496503496503        ka=-0.0813160731673404*(h/hd)**2+0.255143813465017*(h/hd)#        kp=0.02#        ka=10.0*kp        bx=b*float(n)-2.0*(float(n-1)*kp+ka)*h        q=c*bx*h**1.5    return qdef spq(elv,qqin,hmax,qref,elini):    # to obtain the discharge of overflow crest from the water level    q=qqin    qs=sp(elv,hmax)    if qref&lt;qqin: q=qs    if qref+0.1&lt;qs: q=qs    return qdef ret_v(nn,rh,rv,elv):    # to obtain the cumulative volume from the water level    for i in range(0,nn-1):        if rh[i]&lt;=elv and elv&lt;=rh[i+1]: break    if rh[nn-1]&lt;elv: i=nn-2    x1=rv[i]    y1=rh[i]    x2=rv[i+1]    y2=rh[i+1]    a=(y2-y1)/(x2-x1)    b=(x2*y1-x1*y2)/(x2-x1)    v=(elv-b)/a    return vdef ret_h(nn,rh,rv,v):    # to obtain the water level from cumulative volume    for i in range(0,nn-1):        if rv[i]&lt;=v and v&lt;=rv[i+1]: break    if rv[nn-1]&lt;v: i=nn-2    x1=rv[i]    y1=rh[i]    x2=rv[i+1]    y2=rh[i+1]    a=(y2-y1)/(x2-x1)    b=(x2*y1-x1*y2)/(x2-x1)    elv=a*v+b    return elv#main routineparam=sys.argvfnamer1=param[1] # h-v data of reservoirfnamer2=param[2] # hydrograph of design floodfnamew =param[3] # output file name# input h-v datarh=[]rv=[]fin=open(fnamer1,'r')text=fin.readline()text=text.strip()text=text.split()vcoef=float(text[0])while 1:    text=fin.readline()    if not text: break    text=text.strip()    text=text.split()    rh=rh+[float(text[0])]    rv=rv+[float(text[1])*vcoef]fin.close()nn=len(rh)# input time sequence of inflowti=[]q_in=[]fin=open(fnamer2,'r')text=fin.readline()text=text.strip()text=text.split()elini=float(text[0])outlet=float(text[1])while 1:    text=fin.readline()    if not text: break    text=text.strip()    text=text.split()    ti=ti+[float(text[0])]    q_in=q_in+[float(text[1])]fin.close()nd=len(ti)hmax=-99.9for iii in range(0,10):    qref=sp(elini,hmax)    pel=[]    pqo=[]    fout=open(fnamew,'w')    # initial outflow    elv=elini    el=elv    vol=ret_v(nn,rh,rv,elv)    q_out=spq(elv,q_in[0],hmax,qref,elini)+outlet    i=0    iud=0    print('{0:&gt;5s} {1:&gt;5s} {2:&gt;10s} {3:&gt;10s} {4:&gt;15s} {5:&gt;15s} {6:&gt;15s} {7:&gt;15s}'.format('i','iud','time','el','el-elv','vol','q_in','q_out'),file=fout)    print('{0:5d} {1:5d} {2:10.3f} {3:10.3f} {4:15e} {5:15e} {6:15e} {7:15e}'.format(i,iud,ti[i],el,el-elv,vol,q_in[i],q_out),file=fout)    # iterative calculation    iud=1    dh=0.0001    eps=0.0001    itmax=int(1.0/dh)*10    for i in range(0,nd-1):        qqin=0.5*(q_in[i]+q_in[i+1])        tim=0.5*(ti[i+1]-ti[i])        qin=0.5*(q_in[i]+q_in[i+1])*(ti[i+1]-ti[i])*3600.0        hh=0.0        j=0        while 1:            j=j+1;            hh=hh+float(iud)*dh            elv=el;    q1=spq(elv,qqin,hmax,qref,elini)+outlet            elv=el+hh; q2=spq(elv,qqin,hmax,qref,elini)+outlet            qout=0.5*(q1+q2)*(ti[i+1]-ti[i])*3600.0            r=vol+qin-qout            elv=ret_h(nn,rh,rv,r)            if abs(q1-qqin)&lt;eps and tim&lt;36.0:                r=vol                hh=0.0                break            if iud==1 and j==10:                if el+hh&gt;elv:                    iud=-1                    hh=0.0                    j=0            if iud==-1 and j==10:                if el+hh&lt;elv:                    iud=1                    hh=0.0                    j=0            if abs(el+hh-elv)&lt;eps: break        vol=r    # cumulative volume        el=el+hh # elevation        q_out=q2 # outflow        print('{0:5d} {1:5d} {2:10.3f} {3:10.3f} {4:15e} {5:15e} {6:15e} {7:15e}'.format(i+1,iud,ti[i+1],el,el-elv,vol,q_in[i+1],q_out),file=fout)        pel=pel+[el]        pqo=pqo+[q_out]        sys.stdout.write('\\r%d / %d' % (i+1,nd-1))        sys.stdout.flush()    fout.close()    if abs(elini+hmax-max(pel))&lt;0.001: break    hmax=max(pel)-elini    sys.stdout.write('\')    sys.stdout.write('time: %10.3f\'% max(ti))    sys.stdout.write('h   : %10.3f\'% hmax)    sys.stdout.write('qin : %10.3f %10.3f\'% (min(q_in),max(q_in)))    sys.stdout.write('qout: %10.3f %10.3f\'% (min(pqo),max(pqo)))    sys.stdout.write('el  : %10.3f %10.3f\'% (min(pel),max(pel)))    sys.stdout.write('qref: %10.3f\'% (qref))    del pel,pqosys.stdout.write('\')sys.stdout.write('time: %10.3f\'% max(ti))sys.stdout.write('h   : %10.3f\'% hmax)sys.stdout.write('qin : %10.3f %10.3f\'% (min(q_in),max(q_in)))sys.stdout.write('qout: %10.3f %10.3f\'% (min(pqo),max(pqo)))sys.stdout.write('el  : %10.3f %10.3f\'% (min(pel),max(pel)))sys.stdout.write('qref: %10.3f\'% (qref))作図プログラム解析結果出力ファイルi：データ番号iud：水位上昇・降下を示す記号（0：初期値，1：水位上昇，2：水位降下から一定）time：時刻el-elv：仮定した水位(el)と貯水池水位ー容量曲線より求めた水位の差分vol：貯水池の貯留量q_in：貯水池への流入量（m3/s）q_out：貯水池からの流出量（m3/s）out_flood.txt    i   iud       time         el          el-elv             vol            q_in           q_out    0     0      0.000    130.000    0.000000e+00    1.053350e+09    1.180000e+02    1.180000e+02    1     1      1.000    130.000    0.000000e+00    1.053350e+09    2.050000e+02    1.615000e+02    2     1      2.000    130.000    0.000000e+00    1.053350e+09    2.890000e+02    2.470000e+02    3     1      3.000    130.000    0.000000e+00    1.053350e+09    3.710000e+02    3.300000e+02    4     1      4.000    130.000    0.000000e+00    1.053350e+09    4.540000e+02    4.125000e+02    5     1      5.000    130.000    0.000000e+00    1.053350e+09    5.370000e+02    4.955000e+02..........作図プログラム作図プログラムでは，以下のように，numpy配列でデータを読み込み，計算時間内で，流入量と流出量に大きな差がないことを確認するため，simpson法による数値積分を行っている．import numpy as npfrom scipy import integratedata=np.loadtxt(fnamer,skiprows=1,usecols=(2,3,6,7))ti=data[:,0]el=data[:,1]qi=data[:,2]qo=data[:,3]int_qi=integrate.simps(qi*3600,ti)int_qo=integrate.simps(qo*3600,ti)print('v_in={0:10.3f} million m3'.format(int_qi/1e6))print('vout={0:10.3f} million m3'.format(int_qo/1e6))numpy配列では，最大値となる要素のインデックスは以下のように求める．n1=np.argmax(qi)n2=np.argmax(qo)n3=np.argmax(el)プログラムでは，twinx() を用いて，左縦軸に流量，右縦軸に貯水池水位をとってグラフ化している．また凡例を１つのボックスに収めるため，右縦軸用のダミープロットを行っている．また点線および一点鎖線は，デフォルトはあまりかっこよくないため使わず，別途定義している．line1=plt.plot(ti,qi,color='black',lw=2.0,label='q (inflow)')line2=plt.plot(ti,qo,color='black',lw=2.0,label='q (outflow)')plt.plot([0],[0],color='black',lw=2.0,label='water level') #dummy for legendline1[0].set_dashes([5,2])line2[0].set_dashes([8,4,2,4])プログラム全文py_eng_fig_floodrm.py# -*- coding: utf-8 -*-import numpy as npfrom scipy import integrateimport matplotlib.pyplot as pltdef drawfig(fnamer,fnamef,elcr):    # parameter setting    xmin=0.0;xmax=140.0    qmin=0.0;qmax=20000.0    hmin=124.0;hmax=144.0    # input data    data=np.loadtxt(fnamer,skiprows=1,usecols=(2,3,6,7))    ti=data[:,0]    el=data[:,1]    qi=data[:,2]    qo=data[:,3]    int_qi=integrate.simps(qi*3600,ti)    int_qo=integrate.simps(qo*3600,ti)    print('v_in={0:10.3f} million m3'.format(int_qi/1e6))    print('vout={0:10.3f} million m3'.format(int_qo/1e6))    fig=plt.figure()    line1=plt.plot(ti,qi,color='black',lw=2.0,label='q (inflow)')    line2=plt.plot(ti,qo,color='black',lw=2.0,label='q (outflow)')    plt.plot([0],[0],color='black',lw=2.0,label='water level') #dummy for legend    line1[0].set_dashes([5,2])    line2[0].set_dashes([8,4,2,4])    n1=np.argmax(qi)    n2=np.argmax(qo)    n3=np.argmax(el)    plt.text(ti[n1],qi[n1],'max:%.0f'%max(qi),fontsize=10,color='black',ha='left',va='bottom')    plt.text(ti[n2],qo[n2],'max:%.0f'%max(qo),fontsize=10,color='black',ha='left',va='bottom')    plt.xlabel('time (hour)')    plt.ylabel('discharge (m$^3$/s)')    plt.xticks(np.arange(xmin,xmax+12,12))    plt.yticks(np.arange(qmin,qmax+2000,2000))    plt.grid()    plt.legend(shadow=true,loc='upper right',handlelength=3)    plt.twinx()    plt.plot(ti,el,color='black',lw=2.0,label='water level')    plt.hlines([elcr],xmin,xmax,color='black',lw=1.0,linestyles='dashed',label='o.f.crest')    plt.text(ti[n3],el[n3],'elmax:%.3f'%max(el),fontsize=10,color='black',ha='left',va='bottom')    plt.text(xmin+1,elcr,'fsl:el.%.1f'%elcr,fontsize=10,color='black',ha='right',va='bottom')    plt.ylim(hmin,hmax)    plt.yticks(np.arange(hmin,hmax+2,2))    plt.ylabel('water level (el.m)')    plt.savefig(fnamef,dpi=200)    plt.show()    plt.close()# main routinefnamer='out_flood.txt'fnamef='fig_flood.png'elcr=130.0drawfig(fnamer,fnamef,elcr)以上",
+    "body": "##はじめに洪水時の貯水池水位追跡（英語では flood routing）は，洪水が貯水池に流入した時，ダムからの放流量を考慮しながら，水位がどのように変化するかを追跡する解析です．特に湛水面積・容量の大きな貯水池では，洪水流入時の貯水池の貯留効果が大きいため，ある程度の貯水池の水位上昇は伴いますが，流入洪水波形のピークをカットできるとともに，合理的な洪水吐設計を行うことができるため，重要な解析となってきます．また繰り返し計算を伴う解析であるため，プログラム言語による処理が適していると考えています．筆者も，色々なケースでこの解析を行ってきましたが，プログラムの簡単な解説を行いながら，ここにアップしてみることにしました．##理論貯水池への貯留量は，流入量と流出量の差に支配され，ある時間間隔$\\delta t$に対し，この関係は，以下のとおり表現できる．$$\\delta s=q_{i}\\cdot \\delta t - q_{o}\\cdot \\delta t$$+ $\\delta t$ : 時間間隔+ $\\delta s$ : $\\delta t$時間での貯水池への貯留量+ $q_i$ : $\\delta t$時間内の平均流入量+ $q_o$ : $\\delta t$時間内の平均流出量上式を解く上で，以下の３つの特性値が必要となる．+ 貯水池の水位ー容量曲線+ 貯水池への流入量時刻歴：通常は洪水のハイドログラフ+ 貯水池からの流出特性：通常は洪水吐の水位ー流出量関係解析手順は以下のとおり．(step-0) 初期値として，初期貯水池水位標高，初期流入量を与える．初期水位標高により，貯水池水位ー容量曲線から初期貯水池貯留量が算定できる．(step-1) $\\delta t$時間後の流入量を入力するとともに，水位上昇量（貯水池水位）を仮定し流出量の計算を行う．(step-2) $\\delta t$時間前の流入量と流出量を用い，$\\delta t$時間内の流入体積と流出体積を求める．この流入体積と流出体積の差分が，$\\delta t$時間内の貯水池への貯留量増分となる．(step-3) 貯留量増分に前回貯水池貯留量を加えることにより，最新の貯水池貯留量が計算され，また貯水池水位ー容量曲線より貯水池水位も計算できる．(step-4) (step-1)において水位上昇量を仮定しているので，(step-3)で求めた貯水池水位と(step-1)で仮定した貯水池水位を比較し，これらの差分が許容誤差以内になるまで，(step-1)から(step-4)の過程を繰り返す．なお，通常の場合，洪水初期は貯水池水位および流出量は上昇していき，流入量のピークを過ぎても貯水池水位および流出量は上昇し続けるが，ある時点から水位および流出量は減少し始める．設計上は，この水位および流出量のピークを捉えれば良いわけであるが，解析としてグラフの体裁を考えると水位減少時の挙動も追跡してあるほうがかっこいいので，水位降下時を追跡できるルーチンもプログラムに組み込んでおく．##解析事例+ 貯水池は発電用であり，ゲートを有している．+ 初期水位はel.130mであり，ゲート部越流頂標高はel.114mとしている．+ 事例では，ピーク流量12500m3/sの洪水波形が流入した時の最高水位および流出量を追跡している．+ ゲートを全開にした時，水位標高el.130mだとすれば越流量は約4300m3/sであるため，流入量が4300m3/s以下の場合はゲート操作により貯水位をel.130mに保ち，それ以上となったらゲート全開の条件で自由越流させることにしている．+ また発電用貯水池なので，洪水ピークが去り貯水位低下が始まってからは，水位標高がel.130mに達する直前からゲート操作を開始し，貯水位をel.130mに保つ運用をするように設定している．すなわち貯水位el.130mとなってからは流入量＝放流量となることとしている．![fig_flood.png](https://qiita-image-store.s3.amazonaws.com/0/129300/d93fc2c9-fa82-086b-27a7-e3a666b88d45.png)##プログラムプログラムは，解析用と作図用に分けている．以下は実行用スクリプト```python3 py_eng_floodrm.py hv1m.txt hydro1m.txt out_flood.txtpython3 py_eng_fig_floodrm.py```###解析プログラム####入力データ：貯水池h-vデータ+ １行目は貯水池容量に乗じる係数（ここでは百万m3）．+ ２行目以降は，１列目が標高，２列めが累計容量を示す．```txt:hv1m.txt1e6 60.0         0.000 61.0         0.045 62.0         0.187 63.0         0.437..........```####入力データ：洪水波形（ハイドログラフ）+ １行目１列目は初期貯水池水位標高（ここでは130m）．+ １行目２列目は常時放流量（ここでは０）．+ ２行目以降は，１列目が時刻，２列目が流入量（m3/s）```txt:hydro1m.txt130.0 0  0.0           118  1.0           205  2.0           289  3.0           371  4.0           454  5.0           537..........```####解析プログラム関数 def sp(elv,hmax): および def spq(elv,qqin,hmax,qref,elini): は洪水吐きの特性を示すものであり，基本的には色々な貯水池のタイプに合わせて，この２つを書き換えながら使いまわしている．（洪水吐の特性によっては本ルーチンも書き換える必要あり）```python:py_eng_floodrm.py# -*- coding: utf-8 -*-import sysfrom math import *def sp(elv,hmax):    # head-discharge relationship of spillway    elcr=116.0    b=11.5    n=4    x=0.1387    cd=1.971+0.498*x+6.63*x*x    a=(1.6-cd)/(cd-3.2)    h=elv-elcr    q=0.0    if 0.05s} {1:>5s} {2:>10s} {3:>10s} {4:>15s} {5:>15s} {6:>15s} {7:>15s}'.format('i','iud','time','el','el-elv','vol','q_in','q_out'),file=fout)    print('{0:5d} {1:5d} {2:10.3f} {3:10.3f} {4:15e} {5:15e} {6:15e} {7:15e}'.format(i,iud,ti[i],el,el-elv,vol,q_in[i],q_out),file=fout)    # iterative calculation    iud=1    dh=0.0001    eps=0.0001    itmax=int(1.0/dh)*10    for i in range(0,nd-1):        qqin=0.5*(q_in[i]+q_in[i+1])        tim=0.5*(ti[i+1]-ti[i])        qin=0.5*(q_in[i]+q_in[i+1])*(ti[i+1]-ti[i])*3600.0        hh=0.0        j=0        while 1:            j=j+1;            hh=hh+float(iud)*dh            elv=el;    q1=spq(elv,qqin,hmax,qref,elini)+outlet            elv=el+hh; q2=spq(elv,qqin,hmax,qref,elini)+outlet            qout=0.5*(q1+q2)*(ti[i+1]-ti[i])*3600.0            r=vol+qin-qout            elv=ret_h(nn,rh,rv,r)            if abs(q1-qqin)elv:                    iud=-1                    hh=0.0                    j=0            if iud==-1 and j==10:                if el+hh<elv:                    iud=1                    hh=0.0                    j=0            if abs(el+hh-elv)<eps: break        vol=r    # cumulative volume        el=el+hh # elevation        q_out=q2 # outflow        print('{0:5d} {1:5d} {2:10.3f} {3:10.3f} {4:15e} {5:15e} {6:15e} {7:15e}'.format(i+1,iud,ti[i+1],el,el-elv,vol,q_in[i+1],q_out),file=fout)        pel=pel+[el]        pqo=pqo+[q_out]        sys.stdout.write('\\r%d / %d' % (i+1,nd-1))        sys.stdout.flush()    fout.close()    if abs(elini+hmax-max(pel))<0.001: break    hmax=max(pel)-elini    sys.stdout.write('\')    sys.stdout.write('time: %10.3f\'% max(ti))    sys.stdout.write('h   : %10.3f\'% hmax)    sys.stdout.write('qin : %10.3f %10.3f\'% (min(q_in),max(q_in)))    sys.stdout.write('qout: %10.3f %10.3f\'% (min(pqo),max(pqo)))    sys.stdout.write('el  : %10.3f %10.3f\'% (min(pel),max(pel)))    sys.stdout.write('qref: %10.3f\'% (qref))    del pel,pqosys.stdout.write('\')sys.stdout.write('time: %10.3f\'% max(ti))sys.stdout.write('h   : %10.3f\'% hmax)sys.stdout.write('qin : %10.3f %10.3f\'% (min(q_in),max(q_in)))sys.stdout.write('qout: %10.3f %10.3f\'% (min(pqo),max(pqo)))sys.stdout.write('el  : %10.3f %10.3f\'% (min(pel),max(pel)))sys.stdout.write('qref: %10.3f\'% (qref))```###作図プログラム####解析結果出力ファイル+ i：データ番号+ iud：水位上昇・降下を示す記号（0：初期値，1：水位上昇，2：水位降下から一定）+ time：時刻+ el-elv：仮定した水位(el)と貯水池水位ー容量曲線より求めた水位の差分+ vol：貯水池の貯留量+ q_in：貯水池への流入量（m3/s）+ q_out：貯水池からの流出量（m3/s）```txt:out_flood.txt    i   iud       time         el          el-elv             vol            q_in           q_out    0     0      0.000    130.000    0.000000e+00    1.053350e+09    1.180000e+02    1.180000e+02    1     1      1.000    130.000    0.000000e+00    1.053350e+09    2.050000e+02    1.615000e+02    2     1      2.000    130.000    0.000000e+00    1.053350e+09    2.890000e+02    2.470000e+02    3     1      3.000    130.000    0.000000e+00    1.053350e+09    3.710000e+02    3.300000e+02    4     1      4.000    130.000    0.000000e+00    1.053350e+09    4.540000e+02    4.125000e+02    5     1      5.000    130.000    0.000000e+00    1.053350e+09    5.370000e+02    4.955000e+02..........```####作図プログラム作図プログラムでは，以下のように，numpy配列でデータを読み込み，計算時間内で，流入量と流出量に大きな差がないことを確認するため，simpson法による数値積分を行っている．```import numpy as npfrom scipy import integratedata=np.loadtxt(fnamer,skiprows=1,usecols=(2,3,6,7))ti=data[:,0]el=data[:,1]qi=data[:,2]qo=data[:,3]int_qi=integrate.simps(qi*3600,ti)int_qo=integrate.simps(qo*3600,ti)print('v_in={0:10.3f} million m3'.format(int_qi/1e6))print('vout={0:10.3f} million m3'.format(int_qo/1e6))```numpy配列では，最大値となる要素のインデックスは以下のように求める．```n1=np.argmax(qi)n2=np.argmax(qo)n3=np.argmax(el)```プログラムでは，twinx() を用いて，左縦軸に流量，右縦軸に貯水池水位をとってグラフ化している．また凡例を１つのボックスに収めるため，右縦軸用のダミープロットを行っている．また点線および一点鎖線は，デフォルトはあまりかっこよくないため使わず，別途定義している．```line1=plt.plot(ti,qi,color='black',lw=2.0,label='q (inflow)')line2=plt.plot(ti,qo,color='black',lw=2.0,label='q (outflow)')plt.plot([0],[0],color='black',lw=2.0,label='water level') #dummy for legendline1[0].set_dashes([5,2])line2[0].set_dashes([8,4,2,4])```#####プログラム全文```python:py_eng_fig_floodrm.py# -*- coding: utf-8 -*-import numpy as npfrom scipy import integrateimport matplotlib.pyplot as pltdef drawfig(fnamer,fnamef,elcr):    # parameter setting    xmin=0.0;xmax=140.0    qmin=0.0;qmax=20000.0    hmin=124.0;hmax=144.0    # input data    data=np.loadtxt(fnamer,skiprows=1,usecols=(2,3,6,7))    ti=data[:,0]    el=data[:,1]    qi=data[:,2]    qo=data[:,3]    int_qi=integrate.simps(qi*3600,ti)    int_qo=integrate.simps(qo*3600,ti)    print('v_in={0:10.3f} million m3'.format(int_qi/1e6))    print('vout={0:10.3f} million m3'.format(int_qo/1e6))    fig=plt.figure()    line1=plt.plot(ti,qi,color='black',lw=2.0,label='q (inflow)')    line2=plt.plot(ti,qo,color='black',lw=2.0,label='q (outflow)')    plt.plot([0],[0],color='black',lw=2.0,label='water level') #dummy for legend    line1[0].set_dashes([5,2])    line2[0].set_dashes([8,4,2,4])    n1=np.argmax(qi)    n2=np.argmax(qo)    n3=np.argmax(el)    plt.text(ti[n1],qi[n1],'max:%.0f'%max(qi),fontsize=10,color='black',ha='left',va='bottom')    plt.text(ti[n2],qo[n2],'max:%.0f'%max(qo),fontsize=10,color='black',ha='left',va='bottom')    plt.xlabel('time (hour)')    plt.ylabel('discharge (m$^3$/s)')    plt.xticks(np.arange(xmin,xmax+12,12))    plt.yticks(np.arange(qmin,qmax+2000,2000))    plt.grid()    plt.legend(shadow=true,loc='upper right',handlelength=3)    plt.twinx()    plt.plot(ti,el,color='black',lw=2.0,label='water level')    plt.hlines([elcr],xmin,xmax,color='black',lw=1.0,linestyles='dashed',label='o.f.crest')    plt.text(ti[n3],el[n3],'elmax:%.3f'%max(el),fontsize=10,color='black',ha='left',va='bottom')    plt.text(xmin+1,elcr,'fsl:el.%.1f'%elcr,fontsize=10,color='black',ha='right',va='bottom')    plt.ylim(hmin,hmax)    plt.yticks(np.arange(hmin,hmax+2,2))    plt.ylabel('water level (el.m)')    plt.savefig(fnamef,dpi=200)    plt.show()    plt.close()# main routinefnamer='out_flood.txt'fnamef='fig_flood.png'elcr=130.0drawfig(fnamer,fnamef,elcr)```以上",
+    "coediting": false,
+    "created_at": "2016-09-12t23:18:36+09:00",
+    "group": null,
+    "id": "b8434ba3d8540aecb284",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "matplotlib",
+        "versions": []
+      },
+      {
+        "name": "flood-routine",
+        "versions": []
+      }
+    ],
+    "title": "python, matplotlibでflood routing（洪水時貯水池水位追跡）",
+    "updated_at": "2016-09-12t23:20:16+09:00",
+    "url": "http://qiita.com/damyarou/items/b8434ba3d8540aecb284",
+    "user": {
+      "description": null,
+      "facebook_id": null,
+      "followees_count": 0,
+      "followers_count": 6,
+      "github_login_name": null,
+      "id": "damyarou",
+      "items_count": 17,
+      "linkedin_id": null,
+      "location": null,
+      "name": "",
+      "organization": null,
+      "permanent_id": 129300,
+      "profile_image_url": "https://s3-ap-northeast-1.amazonaws.com/qiita-image-store/0/129300/ea0d2ea2ccecfc224ed391b1819174fb65656a04/medium.png?1471151653",
+      "twitter_screen_name": null,
+      "website_url": null
+    }
+  },
+  {
+    "rendered_body": "言語処理100本ノック 2015の挑戦記録です。環境はubuntu 16.04 lts ＋ python 3.5.2 :: anaconda 4.1.1 (64-bit)です。過去のノックの一覧はこちらからどうぞ。第1章: 準備運動04.元素記号\"hi he lied because boron could not oxidize fluorine. new nations might also sign peace security clause. arthur king can.\"という文を単語に分解し，1, 5, 6, 7, 8, 9, 15, 16, 19番目の単語は先頭の1文字，それ以外の単語は先頭に2文字を取り出し，取り出した文字列から単語の位置（先頭から何番目の単語か）への連想配列（辞書型もしくはマップ型）を作成せよ．出来上がったコード：main.py# coding: utf-8num_first_only = (1, 5, 6, 7, 8, 9, 15, 16, 19)target = 'hi he lied because boron could not oxidize fluorine. new nations might also sign peace security clause. arthur king can.'result = {}words = target.split(' ')for (num, word) in enumerate(words, 1):    if num in num_first_only:        result[word[0:1]] = num    else:        result[word[0:2]] = numprint(result)実行結果：端末{'k': 19, 's': 16, 'he': 2, 'al': 13, 'b': 5, 'mi': 12, 'c': 6, 'o': 8, 'li': 3, 'n': 7, 'na': 11, 'h': 1, 'si': 14, 'p': 15, 'ne': 10, 'ca': 20, 'ar': 18, 'f': 9, 'be': 4, 'cl': 17}あれ？原子番号12のmg（マグネシウム）だけおかしいですね。miになっています。でも、該当する位置の単語はmightなので、プログラムは正しそう。enumerate()が開始番号を指定できるのは便利。進んでしまったイテラブルの途中から列挙したい場合などに、コードがシンプルになりそうです。実行する度に結果が変わる！？このプログラム、実行する度に結果が変化することに気づきました。実行結果2{'b': 5, 'al': 13, 'be': 4, 'cl': 17, 'p': 15, 'si': 14, 'ca': 20, 'ne': 10, 'o': 8, 'k': 19, 's': 16, 'li': 3, 'he': 2, 'na': 11, 'c': 6, 'ar': 18, 'mi': 12, 'h': 1, 'f': 9, 'n': 7}実行結果3{'b': 5, 'he': 2, 'h': 1, 'c': 6, 'be': 4, 'si': 14, 'o': 8, 'f': 9, 'p': 15, 'ca': 20, 'al': 13, 'ne': 10, 'li': 3, 'k': 19, 's': 16, 'ar': 18, 'cl': 17, 'mi': 12, 'na': 11, 'n': 7}実行結果4{'cl': 17, 'si': 14, 'al': 13, 'c': 6, 'ca': 20, 'o': 8, 'he': 2, 'n': 7, 'f': 9, 'ar': 18, 'na': 11, 'mi': 12, 'h': 1, 'p': 15, 'be': 4, 'ne': 10, 'li': 3, 'b': 5, 's': 16, 'k': 19}辞書への格納順序は全く同じなので、なかなか興味深い挙動です。実行の度にハッシュ関数が変化しているのでしょうか。でも何のために？あ、もしかしたらprint()時に、使用アドレスの影響を受けて順番が変わるとか？余談ですが、cのプログラマ時代、辞書の実装で、衝突によるパフォーマンス悪化と、その回避によるハッシュテーブルのメモリ消費量増大のトレードオフに胃を痛めてきた経験があるので、内部実装が気になります。pythonはcで実装されていると聞いたので、時間に余裕ができたらちょっと覗いてみたいところです。　　5本目のノックは以上です。誤りなどありましたら、ご指摘いただけますと幸いです。",
+    "body": "[言語処理100本ノック 2015](http://www.cl.ecei.tohoku.ac.jp/nlp100/)の挑戦記録です。環境はubuntu 16.04 lts ＋ python 3.5.2 \\:\\: anaconda 4.1.1 (64-bit)です。過去のノックの一覧は[こちら](http://qiita.com/segavvy/items)からどうぞ。## 第1章: 準備運動###04.元素記号>\"hi he lied because boron could not oxidize fluorine. new nations might also sign peace security clause. arthur king can.\"という文を単語に分解し，1, 5, 6, 7, 8, 9, 15, 16, 19番目の単語は先頭の1文字，それ以外の単語は先頭に2文字を取り出し，取り出した文字列から単語の位置（先頭から何番目の単語か）への連想配列（辞書型もしくはマップ型）を作成せよ．出来上がったコード：```python:main.py# coding: utf-8num_first_only = (1, 5, 6, 7, 8, 9, 15, 16, 19)target = 'hi he lied because boron could not oxidize fluorine. new nations might also sign peace security clause. arthur king can.'result = {}words = target.split(' ')for (num, word) in enumerate(words, 1):\tif num in num_first_only:\t\tresult[word[0:1]] = num\telse:\t\tresult[word[0:2]] = numprint(result)```実行結果：```python:端末{'k': 19, 's': 16, 'he': 2, 'al': 13, 'b': 5, 'mi': 12, 'c': 6, 'o': 8, 'li': 3, 'n': 7, 'na': 11, 'h': 1, 'si': 14, 'p': 15, 'ne': 10, 'ca': 20, 'ar': 18, 'f': 9, 'be': 4, 'cl': 17}```あれ？原子番号12のmg（マグネシウム）だけおかしいですね。miになっています。でも、該当する位置の単語はmightなので、プログラムは正しそう。[`enumerate()`](http://docs.python.jp/3/library/functions.html#enumerate)が開始番号を指定できるのは便利。進んでしまったイテラブルの途中から列挙したい場合などに、コードがシンプルになりそうです。###実行する度に結果が変わる！？このプログラム、実行する度に結果が変化することに気づきました。```python:実行結果2{'b': 5, 'al': 13, 'be': 4, 'cl': 17, 'p': 15, 'si': 14, 'ca': 20, 'ne': 10, 'o': 8, 'k': 19, 's': 16, 'li': 3, 'he': 2, 'na': 11, 'c': 6, 'ar': 18, 'mi': 12, 'h': 1, 'f': 9, 'n': 7}``````python:実行結果3{'b': 5, 'he': 2, 'h': 1, 'c': 6, 'be': 4, 'si': 14, 'o': 8, 'f': 9, 'p': 15, 'ca': 20, 'al': 13, 'ne': 10, 'li': 3, 'k': 19, 's': 16, 'ar': 18, 'cl': 17, 'mi': 12, 'na': 11, 'n': 7}``````python:実行結果4{'cl': 17, 'si': 14, 'al': 13, 'c': 6, 'ca': 20, 'o': 8, 'he': 2, 'n': 7, 'f': 9, 'ar': 18, 'na': 11, 'mi': 12, 'h': 1, 'p': 15, 'be': 4, 'ne': 10, 'li': 3, 'b': 5, 's': 16, 'k': 19}```辞書への格納順序は全く同じなので、なかなか興味深い挙動です。実行の度にハッシュ関数が変化しているのでしょうか。でも何のために？あ、もしかしたら`print()`時に、使用アドレスの影響を受けて順番が変わるとか？余談ですが、cのプログラマ時代、辞書の実装で、衝突によるパフォーマンス悪化と、その回避によるハッシュテーブルのメモリ消費量増大のトレードオフに胃を痛めてきた経験があるので、内部実装が気になります。pythonはcで実装されていると聞いたので、時間に余裕ができたらちょっと覗いてみたいところです。　　5本目のノックは以上です。誤りなどありましたら、ご指摘いただけますと幸いです。",
+    "coediting": false,
+    "created_at": "2016-09-12t22:56:43+09:00",
+    "group": null,
+    "id": "4e592dea2f828e5385ff",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "言語処理100本ノック",
+        "versions": []
+      }
+    ],
+    "title": "素人の言語処理100本ノック:04",
+    "updated_at": "2016-09-12t22:56:43+09:00",
+    "url": "http://qiita.com/segavvy/items/4e592dea2f828e5385ff",
+    "user": {
+      "description": "c/c++でmacとwin用の開発していた元プログラマ。c#/vb.net/vb6/vbaも少々。最近pythonをかじり始めました。\r\r写真は丸まってたペンギンです。\r\rあとドラクエ10の経路探索サービス「アストルティア乗換案内」http://astoltiaroutefinder.azurewebsites.net 運営しています。目的地の経路、モンスターや魚の生息場所探しにぜひ！",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 1,
+      "github_login_name": null,
+      "id": "segavvy",
+      "items_count": 5,
+      "linkedin_id": "",
+      "location": "",
+      "name": "segavvy",
+      "organization": "",
+      "permanent_id": 139624,
+      "profile_image_url": "https://s3-ap-northeast-1.amazonaws.com/qiita-image-store/0/139624/5ebd708a6115a0d5675d0868218256ff5d9b48f3/medium.png?1473343070",
+      "twitter_screen_name": "segavvy",
+      "website_url": "http://d.hatena.ne.jp/segavvy/"
+    }
+  },
+  {
+    "rendered_body": "ツンデレ判定api概要このapiは与えられた文章がツンデレ的な文章であるかどうかを判定します。このapiの平均正解率は0.99=99%近辺です。ですが、この正答率はある場合に対して有効でない可能性があります。サンプルリクエストコマンドcurl http://coco.user.surume.tk/api/v1/is_tundere/%e3%81%82%e3%82%93%e3%81%9f%e3%81%aa%e3%82%93%e3%81%8b%e7%9f%a5%e3%82%89%e3%81%aa%e3%81%84%e3%82%93%e3%81%a0%e3%81%8b%e3%82%89%ef%bc%81レスポンス{  \"info\": {    \"average_correct_answer_rate\": 0.9944444444444445,     \"data_count\": [      1800,       1800    ],     \"prediction_algorithm\": \"logistic regression\",     \"result_code\": 1  },   \"status\": \"tunndere\"}リクエスト先基本的なurl:http://coco.user.surume.tk/サポートしているリクエスト形式getpostには対応していません。postの場合、原則的には400が返されます。例外時の対応リクエストパラメータが不正である場合、400が返されます。存在しないurlにリクエストが送られた場合、404が返されます。また、textに問題がある場合errorがjson形式で返されることがあります。ツンデレ判定api/api/v1/is_tundere/textにて判定する文章を受け取ります。「あんたなんか知らないんだから！」を判定したい場合、urlは/api/v1/is_tundere/あんたなんか知らないんだから！となります。レスポンスはレスポンス{  \"info\": {    \"average_correct_answer_rate\": 0.9944444444444445,     \"data_count\": [      1800,       1800    ],     \"prediction_algorithm\": \"logistic regression\",     \"result_code\": 1  },   \"status\": \"tunndere\"}となります。status\"status\"は判定結果を示します。\"tundere\", \"noramal\"の２値が返されます。info\"average_correct_answer_rate\"このapiの判定結果の平均正解率です。平均を求める際の正答率の個数は3です。1&gt;=average_correct_answer_rate&gt;=0\"data_count\"学習に使用するデータの数です。\"prediction_algorithm\"このapiの学習から予測までのアルゴリズムの名称です。\"result_code\"基本的にこのapiでは[0,1]が帰ってきます。0=false,1=trueつまり、0=normal,1=tundereとなります。pythonでリクエストこのプログラムはpython3で動作します。また、requestsの別途インストールが必要です。python2の場合は、print()をprint に変更する必要があります。is_tundere.py#coding: utf-8import requestsif __name__ == \"__main__\":    text = \"あんたなんか知らないんだから！\"    r = requests.get(\"http://coco.user.surume.tk/api/v1/is_tundere/{}\".format(text))    print(\"\"\"判定結果: {}平均正解率: {}リクエストurl: {}\"\"\".format(r.json()[\"status\"], r.json()[\"info\"][\"average_correct_answer_rate\"], r.url))実行結果判定結果: tunndere平均正解率: 0.9944444444444445リクエストurl: http://coco.user.surume.tk/api/v1/is_tundere/%e3%81%82%e3%82%93%e3%81%9f%e3%81%aa%e3%82%93%e3%81%8b%e7%9f%a5%e3%82%89%e3%81%aa%e3%81%84%e3%82%93%e3%81%a0%e3%81%8b%e3%82%89%ef%bc%81",
+    "body": "#ツンデレ判定api##概要このapiは与えられた文章がツンデレ的な文章であるかどうかを判定します。このapiの平均正解率は0.99=99%近辺です。ですが、この正答率はある場合に対して有効でない可能性があります。##サンプル```shell-session:リクエストコマンドcurl http://coco.user.surume.tk/api/v1/is_tundere/%e3%81%82%e3%82%93%e3%81%9f%e3%81%aa%e3%82%93%e3%81%8b%e7%9f%a5%e3%82%89%e3%81%aa%e3%81%84%e3%82%93%e3%81%a0%e3%81%8b%e3%82%89%ef%bc%81``````:レスポンス{  \"info\": {    \"average_correct_answer_rate\": 0.9944444444444445,     \"data_count\": [      1800,       1800    ],     \"prediction_algorithm\": \"logistic regression\",     \"result_code\": 1  },   \"status\": \"tunndere\"}```##リクエスト先基本的なurl:http://coco.user.surume.tk/サポートしているリクエスト形式- getpostには対応していません。postの場合、原則的には400が返されます。例外時の対応リクエストパラメータが不正である場合、400が返されます。存在しないurlにリクエストが送られた場合、404が返されます。また、textに問題がある場合errorがjson形式で返されることがあります。##ツンデレ判定api- /api/v1/is_tundere/textにて判定する文章を受け取ります。「あんたなんか知らないんだから！」を判定したい場合、urlは`/api/v1/is_tundere/あんたなんか知らないんだから！`となります。レスポンスは```:レスポンス{  \"info\": {    \"average_correct_answer_rate\": 0.9944444444444445,     \"data_count\": [      1800,       1800    ],     \"prediction_algorithm\": \"logistic regression\",     \"result_code\": 1  },   \"status\": \"tunndere\"}```となります。###status\"status\"は判定結果を示します。\"tundere\", \"noramal\"の２値が返されます。###info- \"average_correct_answer_rate\"このapiの判定結果の平均正解率です。平均を求める際の正答率の個数は3です。1>=average_correct_answer_rate>=0- \"data_count\"学習に使用するデータの数です。- \"prediction_algorithm\"このapiの学習から予測までのアルゴリズムの名称です。- \"result_code\"基本的にこのapiでは[0,1]が帰ってきます。0=false,1=trueつまり、0=normal,1=tundereとなります。##pythonでリクエストこのプログラムはpython3で動作します。また、requestsの別途インストールが必要です。python2の場合は、print()をprint に変更する必要があります。```py:is_tundere.py#coding: utf-8import requestsif __name__ == \"__main__\":\ttext = \"あんたなんか知らないんだから！\"\tr = requests.get(\"http://coco.user.surume.tk/api/v1/is_tundere/{}\".format(text))\tprint(\"\"\"判定結果: {}平均正解率: {}リクエストurl: {}\"\"\".format(r.json()[\"status\"], r.json()[\"info\"][\"average_correct_answer_rate\"], r.url))``````:実行結果判定結果: tunndere平均正解率: 0.9944444444444445リクエストurl: http://coco.user.surume.tk/api/v1/is_tundere/%e3%81%82%e3%82%93%e3%81%9f%e3%81%aa%e3%82%93%e3%81%8b%e7%9f%a5%e3%82%89%e3%81%aa%e3%81%84%e3%82%93%e3%81%a0%e3%81%8b%e3%82%89%ef%bc%81```",
+    "coediting": false,
+    "created_at": "2016-09-12t20:36:23+09:00",
+    "group": null,
+    "id": "557ee72231979b840ca5",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "api",
+        "versions": []
+      },
+      {
+        "name": "機械学習",
+        "versions": []
+      }
+    ],
+    "title": "ツンデレ判定api[修正済み]",
+    "updated_at": "2016-09-12t20:39:50+09:00",
+    "url": "http://qiita.com/temperance/items/557ee72231979b840ca5",
+    "user": {
+      "description": null,
+      "facebook_id": null,
+      "followees_count": 0,
+      "followers_count": 0,
+      "github_login_name": "coco-14b",
+      "id": "temperance",
+      "items_count": 1,
+      "linkedin_id": null,
+      "location": null,
+      "name": "",
+      "organization": null,
+      "permanent_id": 140624,
+      "profile_image_url": "https://avatars.githubusercontent.com/u/20498497?v=3",
+      "twitter_screen_name": null,
+      "website_url": null
+    }
+  },
+  {
+    "rendered_body": "visual studio codeを使ってみる の続きです。あとは、lintを設定して、文法チェック等をさせるようにすれば、環境設定としては、だいたい終了なはずだけれど、pep8を呼び出せる用に設定する方法については、宿題ということにして、調べておくことにする。visual studio codeにpythonの拡張機能をインストールする以前に書いたとおり、その名もpythonという拡張機能をインストールして、有効化してあります。lintの設定をするlintというのは、もともとの意味は糸くずとかそんな意味らしいんだけれど、要するに縫いあがった洋服の糸くずをとるような作業をする、、、とか、そんな由来なんでしょうか。端的に言うと、文法など小姑のようにチェックすることです。pythonの文法・表記チェックというと、コーディング規約pep8準拠かどうかを調べるその名もpep8というコマンドや、pylintというコマンドなどがあります。今回は、pylintを呼び出すための設定をvisual studio codeに対して行います。pylintのインストールを行う私はanacondaで環境構築をしているので、以下のようにして、pylintをインストールします。まず、anacondaでpylintのパッケージングされているかどうかを検索します。% anaconda search -t conda pylintすると、anaconda/pylintがどうやら標準的な配布物っぽいです。% anaconda show anaconda/pylintusing anaconda api: https://api.anaconda.orgname:    pylintsummary:access:  publicpackage types:  condaversions:   + 1.2.0   + 1.2.1   + 1.1.0   + 1.4.1   + 1.4.0   + 1.4.2   + 1.3.1   + 1.5.4to install this package with conda run:     conda install --channel https://conda.anaconda.org/anaconda pylintということで、インストール方法が分かりました。% conda install --channel https://conda.anaconda.org/anaconda pylintちなみにpep8の場合anaconda環境では、pep8はインストール済でした。「ユーザー設定」に記載するvisual studio codeのユーザー設定を行います。ファイルの保存ごとにlintが働いてチェックされるようにするために必要なのは、以下の一文があれば、ほぼ十分です。    \"python.linting.pylintenabled\": trueちなみに、いやいやpep8派だという場合は、以下のようにするだけです。    \"python.linting.pylintenabled\": false,    \"python.linting.pep8enabled\": trueあとは、必要に応じて、以下の設定をしておけば良いと思います。コードを変更するたびにチェックする場合、ファイルの保存時にチェックする場合は、以下の項目をtrueにします。    \"python.linting.lintontextchange\": true,    \"python.linting.lintonsave\": true,以上により、visual studio codeにてpythonコードを記載する際に、lintによる文法・表記方法などのチェックが可能になりました。",
+    "body": "[visual studio codeを使ってみる](http://qiita.com/fukuit/items/9572ec53e21ce2b3e445) の続きです。> あとは、lintを設定して、文法チェック等をさせるようにすれば、環境設定としては、だいたい終了なはずだけれど、pep8を呼び出せる用に設定する方法については、宿題ということにして、調べておくことにする。# visual studio codeにpythonの拡張機能をインストールする[以前に書いたとおり](http://qiita.com/fukuit/items/9572ec53e21ce2b3e445#python)、その名も[python](https://marketplace.visualstudio.com/items?itemname=donjayamanne.python)という拡張機能をインストールして、有効化してあります。## lintの設定をするlintというのは、もともとの意味は糸くずとかそんな意味らしいんだけれど、要するに縫いあがった洋服の糸くずをとるような作業をする、、、とか、そんな由来なんでしょうか。端的に言うと、文法など小姑のようにチェックすることです。pythonの文法・表記チェックというと、コーディング規約pep8準拠かどうかを調べるその名もpep8というコマンドや、pylintというコマンドなどがあります。今回は、pylintを呼び出すための設定をvisual studio codeに対して行います。## pylintのインストールを行う私はanacondaで環境構築をしているので、以下のようにして、pylintをインストールします。まず、anacondaでpylintのパッケージングされているかどうかを検索します。```bash% anaconda search -t conda pylint```すると、anaconda/pylintがどうやら標準的な配布物っぽいです。```bash% anaconda show anaconda/pylintusing anaconda api: https://api.anaconda.orgname:    pylintsummary:access:  publicpackage types:  condaversions:   + 1.2.0   + 1.2.1   + 1.1.0   + 1.4.1   + 1.4.0   + 1.4.2   + 1.3.1   + 1.5.4to install this package with conda run:     conda install --channel https://conda.anaconda.org/anaconda pylint```ということで、インストール方法が分かりました。```bash% conda install --channel https://conda.anaconda.org/anaconda pylint```### ちなみにpep8の場合anaconda環境では、pep8はインストール済でした。## 「ユーザー設定」に記載するvisual studio codeのユーザー設定を行います。ファイルの保存ごとにlintが働いてチェックされるようにするために必要なのは、以下の一文があれば、ほぼ十分です。```\t\"python.linting.pylintenabled\": true```ちなみに、いやいやpep8派だという場合は、以下のようにするだけです。```\t\"python.linting.pylintenabled\": false,\t\"python.linting.pep8enabled\": true```あとは、必要に応じて、以下の設定をしておけば良いと思います。コードを変更するたびにチェックする場合、ファイルの保存時にチェックする場合は、以下の項目をtrueにします。```    \"python.linting.lintontextchange\": true,    \"python.linting.lintonsave\": true,```以上により、visual studio codeにてpythonコードを記載する際に、lintによる文法・表記方法などのチェックが可能になりました。",
+    "coediting": false,
+    "created_at": "2016-09-12t18:09:42+09:00",
+    "group": null,
+    "id": "cd5a76b49af91de83499",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "visualstudiocode",
+        "versions": []
+      }
+    ],
+    "title": "visual studio codeでpythonコーディングをする設定",
+    "updated_at": "2016-09-12t18:09:42+09:00",
+    "url": "http://qiita.com/fukuit/items/cd5a76b49af91de83499",
+    "user": {
+      "description": "",
+      "facebook_id": "fukuit",
+      "followees_count": 5,
+      "followers_count": 5,
+      "github_login_name": "fukuit",
+      "id": "fukuit",
+      "items_count": 11,
+      "linkedin_id": "",
+      "location": "",
+      "name": "",
+      "organization": "",
+      "permanent_id": 15553,
+      "profile_image_url": "https://qiita-image-store.s3.amazonaws.com/0/15553/profile-images/1473681623",
+      "twitter_screen_name": null,
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "errbot のインストール$ mkvirtualenv -p `which python3` errenv(errenv) $ pip install errbot(errenv) $ mkdir mybot(errenv) $ cd mybot/(errenv) ~/mybot$ errbot --inityour errbot directory has been correctly initialized !just do \"errbot\" and it should start in text/development mode.errbot を起動してみる(errenv) ~/mybot$ errbotbot のコンソールが起動するのでコマンドを入力してみる &gt;&gt;&gt; !trymeit works !コンソールを終了するには python のコンソールと同じように ctrl + d か ctrl + cslackclient のインストール(errenv) $ pip install slackclienterrbot 設定ファイルの編集(errenv) $ vi ~/mybot/config.py設定ファイルのテンプレートhttps://raw.githubusercontent.com/errbotio/errbot/master/errbot/config-template.pyとりあえず backend 、 bot_admins と bot_identity だけ変更しておくimport loggingbackend = 'slack'-- snip --bot_admins = ('@xxxx', )bot_identity = {    'token': 'xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',}slack の token はhttps://my.slack.com/services/new/botから取得errbot をデーモンとして起動(errenv) $ errbot --daemon適当なチャンネルに bot を招待してテストしてみるhttp://errbot.io/en/latest/user_guide/configuration/slack.html",
+    "body": "## errbot のインストール``` bash$ mkvirtualenv -p `which python3` errenv(errenv) $ pip install errbot(errenv) $ mkdir mybot(errenv) $ cd mybot/(errenv) ~/mybot$ errbot --inityour errbot directory has been correctly initialized !just do \"errbot\" and it should start in text/development mode.```## errbot を起動してみる``` bash(errenv) ~/mybot$ errbot```bot のコンソールが起動するのでコマンドを入力してみる``` text >>> !trymeit works !```コンソールを終了するには python のコンソールと同じように ` ctrl + d ` か ` ctrl + c `## slackclient のインストール``` python(errenv) $ pip install slackclient```## errbot 設定ファイルの編集``` bash(errenv) $ vi ~/mybot/config.py```設定ファイルのテンプレートhttps://raw.githubusercontent.com/errbotio/errbot/master/errbot/config-template.pyとりあえず ` backend ` 、 `bot_admins` と `bot_identity` だけ変更しておく``` pythonimport loggingbackend = 'slack'-- snip --bot_admins = ('@xxxx', )bot_identity = {    'token': 'xoxb-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',}```slack の token はhttps://my.slack.com/services/new/botから取得### errbot をデーモンとして起動``` bash(errenv) $ errbot --daemon```適当なチャンネルに bot を招待してテストしてみるhttp://errbot.io/en/latest/user_guide/configuration/slack.html",
+    "coediting": false,
+    "created_at": "2016-09-12t17:06:54+09:00",
+    "group": null,
+    "id": "95cd9e5fa01253a87410",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "errbot",
+        "versions": []
+      }
+    ],
+    "title": "errbot を導入して slack と連携させてみる",
+    "updated_at": "2016-09-12t17:06:54+09:00",
+    "url": "http://qiita.com/anri-c/items/95cd9e5fa01253a87410",
+    "user": {
+      "description": "",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 0,
+      "github_login_name": "anri-c",
+      "id": "anri-c",
+      "items_count": 4,
+      "linkedin_id": "",
+      "location": "",
+      "name": "masaki asato",
+      "organization": "",
+      "permanent_id": 5763,
+      "profile_image_url": "https://qiita-image-store.s3.amazonaws.com/0/5763/profile-images/1473682243",
+      "twitter_screen_name": null,
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "monkey patchとは・・・モンキーパッチは、オリジナルのソースコードを変更することなく、実行時に動的言語(例えばsmalltalk, javascript, objective-c, ruby, perl, python, groovy, など)のコードを拡張したり、変更したりする方法である。wiki参照　題材python3でroundが四捨五入じゃなくなったんだってprint round(2.5) # =&gt; 3.0print(round(2.5)) # =&gt; 2python3からround関数は、浮動小数点として扱うようになったかららしい。これを四捨五入で使えるように!!四捨五入のコードdef custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pprint(custom_round(2.5)) #=&gt; 3.0参考url↓↓こう書きたい↓↓sample.pyimport settingprint(round(2.5)) #=&gt; 3.0setting.pyの生成1.とりあえずmonkey patchsetting.pyimport builtins # 組み込み関数はbuiltinsに入っているdef custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pbuiltins.round = custom_round # monkey patchcustom関数内で対象関数を呼ぶと、無限ループする。=&gt; cuntom関数外でfrom builtins import round as aliasとし、alias関数で呼び出せる。(asにより関数はobject化されている為。moduleでは、asは参照渡し)round = custom_roundでは、roundはすでにobject化されている為、monkey patchにならない。sample.pyimport settingprint(round(2.5)) #=&gt; 3.0表示されたから成功・・・と思いきやsample.pyimport settingprint(round(2.5)) #=&gt; 3.0import sample2sample2.pyprint(round(2.5)) #=&gt; 3.0別ファイルにて、対象関数を実行すると、custom関数が呼ばれる。=&gt; libraryなど外部moduleで対象関数が使用されていると、破壊行動になってしまう可能性がある。=&gt; 安全じゃない!!!!?2.stack traceから呼び出し元のname spaceをhookimport inspect, impimport builtinsdef custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pframe = [frame for (frame, filename, _, _, _,_) in              inspect.getouterframes(inspect.currentframe())[1:]                  if not 'importlib' in filename and not __file__ in filename][0]        # 呼び出しもとの取得、importには、importlibを介している場合がある為frame.f_locals['round'] = custom_roundsample.pyimport settingprint(round(2.5)) #=&gt; 3.0import sample2sample2.pyprint(round(2.5)) #=&gt; 2importのtraceにimportlibが入ることがある。(階層を持つときに確認)builtins(組み込み関数)では、moduleを介せずnamespaceに格納される。moduleでは、最終行を下記のコードに置き換える。namespaceのmoduleを対象関数のみを置き換えたmoduleで上書きする。最終行置き換え.py# ${module} : 対象module, ${function} : 対象関数replacing = imp.load_module('temp', *imp.find_module(${module}))setattr(replacing, '${function}', ${custom関数})frame.f_locals[${module}] = replacingfileを切り分けれたかと思いきや・・・sample2ではsetting処理されない・・・sample.pyimport settingprint(round(2.5)) #=&gt; 3.0import sample2sample2.pyimport settingprint(round(2.5)) #=&gt; 2=&gt; 1度importしたmoduleは、sys.modulesに保持され、2度目のimportでは、sys.moduleから参照し、codeは呼ばれない為。3.builtins.importを直接置き換え、import時に、monkey patch関数を呼ぶ。setting.pyimport inspect, impimport builtinsdef custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pdef hooking():    frame = [frame for (frame, filename, _, _, _,_) in              inspect.getouterframes(inspect.currentframe())[1:]                  if not 'importlib' in filename and not __file__ in filename][0]        # 呼び出しもとの取得、importには、importlibを介している場合がある為    frame.f_locals['round'] = custom_roundclass importer(object):    old_import = __import__    def new_import(self, *args, **kwargs):        if args[0] == __name__: hooking()         return self.old_import(*args, **kwargs)hooking()import builtinsbuiltins.__import__ = importer().new_importsample.pyimport settingprint(round(2.5)) #=&gt; 3.0import sample2sample2.pyimport settingprint(round(2.5)) #=&gt; 3.0importをhookする事によって、monkey patch関数を呼ぶ。python3では、meta path, path hooksなどimport hooksの機構が存在するが、sys.modulesに保持されているmoduleでは、これらは呼ばれない。1度目のimportにて、importのhookを追加するため、1度目のmonkey pathc関数は、トップレベルで呼び出しを記載している。まとめ最終的に、import settingが書かれているmoduleのみでのmonkey patchを実装できました。",
+    "body": "# monkey patchとは・・・> モンキーパッチは、オリジナルのソースコードを変更することなく、実行時に動的言語(例えばsmalltalk, javascript, objective-c, ruby, perl, python, groovy, など)のコードを拡張したり、変更したりする方法である。[wiki参照](https://ja.wikipedia.org/wiki/%e3%83%a2%e3%83%b3%e3%82%ad%e3%83%bc%e3%83%91%e3%83%83%e3%83%81)#　題材 python3でroundが四捨五入じゃなくなったんだって```pyprint round(2.5) # => 3.0``````py3print(round(2.5)) # => 2```python3からround関数は、浮動小数点として扱うようになったかららしい。これを四捨五入で使えるように!!# 四捨五入のコード```py3def custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pprint(custom_round(2.5)) #=> 3.0```[参考url](http://python3porting.com/differences.html#rounding-behavior)# ↓↓こう書きたい↓↓```py3:sample.pyimport settingprint(round(2.5)) #=> 3.0```# setting.pyの生成## 1.とりあえずmonkey patch```py3:setting.pyimport builtins # 組み込み関数はbuiltinsに入っているdef custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pbuiltins.round = custom_round # monkey patch```* custom関数内で対象関数を呼ぶと、無限ループする。  * => cuntom関数外でfrom builtins import round as aliasとし、alias関数で呼び出せる。    (asにより関数はobject化されている為。moduleでは、asは参照渡し)* round = custom_roundでは、roundはすでにobject化されている為、monkey patchにならない。```py3:sample.pyimport settingprint(round(2.5)) #=> 3.0```###### 表示されたから成功・・・と思いきや```py3:sample.pyimport settingprint(round(2.5)) #=> 3.0import sample2``````py3:sample2.pyprint(round(2.5)) #=> 3.0```* 別ファイルにて、対象関数を実行すると、custom関数が呼ばれる。   * => libraryなど外部moduleで対象関数が使用されていると、破壊行動になってしまう可能性がある。   ###### => 安全じゃない!!!!? ## 2.stack traceから呼び出し元のname spaceをhook```py3:import inspect, impimport builtinsdef custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pframe = [frame for (frame, filename, _, _, _,_) in              inspect.getouterframes(inspect.currentframe())[1:]                  if not 'importlib' in filename and not __file__ in filename][0]        # 呼び出しもとの取得、importには、importlibを介している場合がある為frame.f_locals['round'] = custom_round``````py3:sample.pyimport settingprint(round(2.5)) #=> 3.0import sample2``````py3:sample2.pyprint(round(2.5)) #=> 2```* importのtraceにimportlibが入ることがある。(階層を持つときに確認)* builtins(組み込み関数)では、moduleを介せずnamespaceに格納される。  * moduleでは、最終行を下記のコードに置き換える。     * namespaceのmoduleを対象関数のみを置き換えたmoduleで上書きする。  ```py3:最終行置き換え.py# ${module} : 対象module, ${function} : 対象関数replacing = imp.load_module('temp', *imp.find_module(${module}))setattr(replacing, '${function}', ${custom関数})frame.f_locals[${module}] = replacing```###### fileを切り分けれたかと思いきや・・・sample2ではsetting処理されない・・・```py3:sample.pyimport settingprint(round(2.5)) #=> 3.0import sample2``````py3:sample2.pyimport settingprint(round(2.5)) #=> 2```=> 1度importしたmoduleは、sys.modulesに保持され、2度目のimportでは、sys.moduleから参照し、codeは呼ばれない為。## 3.builtins.importを直接置き換え、import時に、monkey patch関数を呼ぶ。```py3:setting.pyimport inspect, impimport builtinsdef custom_round(x, d=0):    import math    p = 10 ** d    return float(math.floor((x * p) + math.copysign(0.5, x)))/pdef hooking():    frame = [frame for (frame, filename, _, _, _,_) in              inspect.getouterframes(inspect.currentframe())[1:]                  if not 'importlib' in filename and not __file__ in filename][0]        # 呼び出しもとの取得、importには、importlibを介している場合がある為    frame.f_locals['round'] = custom_roundclass importer(object):    old_import = __import__    def new_import(self, *args, **kwargs):        if args[0] == __name__: hooking()         return self.old_import(*args, **kwargs)hooking()import builtinsbuiltins.__import__ = importer().new_import``````py3:sample.pyimport settingprint(round(2.5)) #=> 3.0import sample2``````py3:sample2.pyimport settingprint(round(2.5)) #=> 3.0```* importをhookする事によって、monkey patch関数を呼ぶ。  * python3では、meta path, path hooksなどimport hooksの機構が存在するが、    sys.modulesに保持されているmoduleでは、これらは呼ばれない。  * 1度目のimportにて、importのhookを追加するため、1度目のmonkey pathc関数は、    トップレベルで呼び出しを記載している。# まとめ最終的に、import settingが書かれているmoduleのみでのmonkey patchを実装できました。",
+    "coediting": false,
+    "created_at": "2016-09-12t16:52:11+09:00",
+    "group": null,
+    "id": "ff1f862eb37ee2d8c389",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "黒魔術",
+        "versions": []
+      },
+      {
+        "name": "monkeypatch",
+        "versions": []
+      },
+      {
+        "name": "import_hooks",
+        "versions": []
+      }
+    ],
+    "title": "pythonで一部分のみ安全に?monkey patchしたい",
+    "updated_at": "2016-09-12t16:52:11+09:00",
+    "url": "http://qiita.com/monoquro/items/ff1f862eb37ee2d8c389",
+    "user": {
+      "description": null,
+      "facebook_id": null,
+      "followees_count": 0,
+      "followers_count": 2,
+      "github_login_name": "monoquro",
+      "id": "monoquro",
+      "items_count": 6,
+      "linkedin_id": null,
+      "location": null,
+      "name": "",
+      "organization": null,
+      "permanent_id": 87455,
+      "profile_image_url": "https://avatars.githubusercontent.com/u/12559143?v=3",
+      "twitter_screen_name": null,
+      "website_url": null
+    }
+  },
+  {
+    "rendered_body": "foliumについての日本語のドキュメントが少なかったので、初歩的な使い方をまとめてみました。(本文はfolium-0.2.1を対象にしています)foliumとはインタラクティブな地図が作成できるleaflet.jsというライブラリをpythonから使えるようにしたパッケージ。インストールpip install pandaspip install foliumfolium(leaflet)の簡単な使用法folium.mapで地図を作成するfolium.markerなどでリズに表示するオブジェクトを生成map.add_childrenでオブジェクトを設置map.saveで地図を出力する簡単な地図作成の例# -*- coding:utf-8 -*-# pythonでfoliumを利用する際のサンプルimport folium# 地図の基準として兵庫県明石市を設定japan_location = [35, 135]# 基準地点と初期の倍率を指定し、地図を作成するmap = folium.map(location=japan_location, zoom_start=5)# 基準地点にマーカーを設置するsmarker = folium.marker(japan_location, popup='akashi')map.add_children(marker)# 地図をhtml形式で出力map.save(outfile=\"map.html\")このような地図が作成されます備考・folium.mapで地図を作成する際には tiles で地図タイルを指定できます。# -*- coding:utf-8 -*-# 地図タイル指定のサンプルimport folium# 地図の基準として兵庫県明石市を設定japan_location = [35, 135]# 地図タイルをstamen terrianとして地図を作成map = folium.map(location=japan_location, zoom_start=5, tiles=\"stamen terrain\")# 地図をhtml形式で出力map.save(outfile=\"stamen_terrain_map.html\")・地図に設置するオブジェクトとしては　circlemarker, clickformarker, regularpolygonmarker　などがデフォルトで利用できます。おわりにグリグリ動かせる地図が簡単に作れるのでオススメです。ぜひ使ってみてください。参考https://pypi.python.org/pypi/foliumhttp://www.hexacosa.net/blog/detail/147/http://sinhrks.hatenablog.com/entry/2015/12/26/231000",
+    "body": "foliumについての日本語のドキュメントが少なかったので、初歩的な使い方をまとめてみました。(本文はfolium-0.2.1を対象にしています)#foliumとはインタラクティブな地図が作成できるleaflet.jsというライブラリをpythonから使えるようにしたパッケージ。#インストール```pip install pandaspip install folium```#folium(leaflet)の簡単な使用法1. folium.mapで地図を作成する2. folium.markerなどでリズに表示するオブジェクトを生成3. map.add_childrenでオブジェクトを設置4. map.saveで地図を出力する#簡単な地図作成の例```# -*- coding:utf-8 -*-# pythonでfoliumを利用する際のサンプルimport folium# 地図の基準として兵庫県明石市を設定japan_location = [35, 135]# 基準地点と初期の倍率を指定し、地図を作成するmap = folium.map(location=japan_location, zoom_start=5)# 基準地点にマーカーを設置するsmarker = folium.marker(japan_location, popup='akashi')map.add_children(marker)# 地図をhtml形式で出力map.save(outfile=\"map.html\")```このような地図が作成されます![スクリーンショット 2016-09-11 22.43.29.png](https://qiita-image-store.s3.amazonaws.com/0/140192/5cfa5258-368d-1e9f-7e1e-6a2ede8277c1.png)#備考・folium.mapで地図を作成する際には tiles で地図タイルを指定できます。```# -*- coding:utf-8 -*-# 地図タイル指定のサンプルimport folium# 地図の基準として兵庫県明石市を設定japan_location = [35, 135]# 地図タイルをstamen terrianとして地図を作成map = folium.map(location=japan_location, zoom_start=5, tiles=\"stamen terrain\")# 地図をhtml形式で出力map.save(outfile=\"stamen_terrain_map.html\")```・地図に設置するオブジェクトとしては　circlemarker, clickformarker, regularpolygonmarker　などがデフォルトで利用できます。#おわりにグリグリ動かせる地図が簡単に作れるのでオススメです。ぜひ使ってみてください。#参考https://pypi.python.org/pypi/foliumhttp://www.hexacosa.net/blog/detail/147/http://sinhrks.hatenablog.com/entry/2015/12/26/231000",
+    "coediting": false,
+    "created_at": "2016-09-11t23:15:23+09:00",
+    "group": null,
+    "id": "de85668dca14462c182d",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      }
+    ],
+    "title": "pythonのfoliumパッケージで地図を描いてみる",
+    "updated_at": "2016-09-11t23:15:23+09:00",
+    "url": "http://qiita.com/kzkt0713/items/de85668dca14462c182d",
+    "user": {
+      "description": "画像処理、機械学習などなど.\rpythonistを目指して勉強中",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 0,
+      "github_login_name": null,
+      "id": "kzkt0713",
+      "items_count": 1,
+      "linkedin_id": "",
+      "location": "",
+      "name": "",
+      "organization": "",
+      "permanent_id": 140192,
+      "profile_image_url": "https://s3-ap-northeast-1.amazonaws.com/qiita-image-store/0/140192/92891e99f07fe5fb62c7d5cdb7605e132e445c97/medium.png?1473589123",
+      "twitter_screen_name": "kzkt_ura",
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "はじめにaprioriのpython実装を探してるとどうやらorangeで実装されているので試してみたときのメモorange is a component-based data mining software.注意新しいバージョンのorange 3 と 古いバージョンのorange 2（2016/9/11 時点では、orange 2.7.8） があるorange 3 にaprioriモジュールが見つからない。。can't find associate moduleということで orange 2 をインストールをするインストールubuntu にインストールした例を示す公式サイトよりソースファイルをダウンロードして、展開python software foundationにあるとおりビルドしてインストールpython setup.py buildpython setup.py installscipyが必要なのでなければインストールしておくaprioriアソシエーション分析を参考にしたデータは以下のように用意。拡張子がbasketである必要がある$ more hayes-roth-train1-1.basketa2,b2,c3,d4,d3a3,b2,c1,d3,d1&lt;snip&gt;実行&gt;&gt;&gt; import orange&gt;&gt;&gt; data = orange.data.table('hayes-roth-train1-1.basket')&gt;&gt;&gt; rules = orange.associate.associationrulessparseinducer(data, support=0.03, confidence=0.2, classification_rules=1, store_examples=true)&gt;&gt;&gt; print \"%4s %4s %4s  %4s\" % (\"supp\", \"conf\", \"lift\", \"rule\")supp conf lift  rule&gt;&gt;&gt; for r in rules[:5]:...     print \"%4.1f %4.1f %4.1f   %s\" % (r.support, r.confidence, r.lift, r)... 0.0  0.2  3.6   b4 -&gt; c4 0.0  0.3  3.6   c4 -&gt; b4 0.0  0.2  7.2   c4 -&gt; b4 a1 0.0  0.5  6.0   c4 a1 -&gt; b4 0.0  0.2  7.2   c4 -&gt; b4 a1 d3ruleを取り出す以下のドキュメントを見て動かしてみるassociation rules and frequent itemsetsorange.data.instanceorange.data.value&gt;&gt;&gt; len(rules)400&gt;&gt;&gt; rules[383]b2 a2 -&gt; c1&gt;&gt;&gt; rules[383].left[], {\"b2\":1.000, \"a2\":1.000}&gt;&gt;&gt; rules[383].left.get_metas(str).keys()['a2', 'b2']&gt;&gt;&gt; rules[383].right.get_metas(str).keys()['c1']&gt;&gt;&gt; rules[383].confidence0.7333333492279053&gt;&gt;&gt; rules[383].support0.07692307978868484&gt;&gt;&gt; rules[383].n_applies_both11.0対象がルールにマッチするか&gt;&gt;&gt; rule = rules[383]&gt;&gt;&gt; for d in data:...     if rule.appliesboth(d):...         print d...[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d3\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d3\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d4\":1.000, \"d3\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d1\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d3\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d1\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d1\":1.000, \"d1\":1.000}&gt;&gt;&gt; rule.examplesorange.data.table 'table'&gt;&gt;&gt; rule.match_both&lt;2, 3, 5, 40, 87, 105, 111, 116, 118, 135, 137&gt;おわりに速度が出るかはこれからチェックscikit-learnとの違いはどこかに載っているのかな",
+    "body": "## はじめに- aprioriのpython実装を探してるとどうやらorangeで実装されているので試してみたときのメモ- orange is a component-based data mining software.## 注意- 新しいバージョンのorange 3 と 古いバージョンのorange 2（2016/9/11 時点では、orange 2.7.8） がある- orange 3 にaprioriモジュールが見つからない。。[can't find associate module](https://github.com/biolab/orange3-associate/issues/4)- ということで orange 2 をインストールをする## インストールubuntu にインストールした例を示す[公式サイト](http://orange.biolab.si/orange2/)よりソースファイルをダウンロードして、展開[python software foundation](https://pypi.python.org/pypi/orange/2.7)にあるとおりビルドしてインストール```python setup.py buildpython setup.py install```scipyが必要なのでなければインストールしておく## apriori[アソシエーション分析](http://www.codereading.com/statistics/association-analysis.html)を参考にしたデータは以下のように用意。拡張子がbasketである必要がある```$ more hayes-roth-train1-1.basketa2,b2,c3,d4,d3a3,b2,c1,d3,d1```### 実行```>>> import orange>>> data = orange.data.table('hayes-roth-train1-1.basket')>>> rules = orange.associate.associationrulessparseinducer(data, support=0.03, confidence=0.2, classification_rules=1, store_examples=true)>>> print \"%4s %4s %4s  %4s\" % (\"supp\", \"conf\", \"lift\", \"rule\")supp conf lift  rule>>> for r in rules[:5]:...     print \"%4.1f %4.1f %4.1f   %s\" % (r.support, r.confidence, r.lift, r)... 0.0  0.2  3.6   b4 -> c4 0.0  0.3  3.6   c4 -> b4 0.0  0.2  7.2   c4 -> b4 a1 0.0  0.5  6.0   c4 a1 -> b4 0.0  0.2  7.2   c4 -> b4 a1 d3```### ruleを取り出す以下のドキュメントを見て動かしてみる[association rules and frequent itemsets](http://orange.readthedocs.io/en/latest/reference/rst/orange.associate.html)[orange.data.instance](http://orange.readthedocs.io/en/latest/reference/rst/orange.data.instance.html#orange.data.instance)[orange.data.value](http://orange.readthedocs.io/en/latest/reference/rst/orange.data.value.html#orange.data.value)```>>> len(rules)400>>> rules[383]b2 a2 -> c1>>> rules[383].left[], {\"b2\":1.000, \"a2\":1.000}>>> rules[383].left.get_metas(str).keys()['a2', 'b2']>>> rules[383].right.get_metas(str).keys()['c1']>>> rules[383].confidence0.7333333492279053>>> rules[383].support0.07692307978868484>>> rules[383].n_applies_both11.0```### 対象がルールにマッチするか```>>> rule = rules[383]>>> for d in data:...     if rule.appliesboth(d):...         print d...[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d3\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d3\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d4\":1.000, \"d3\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d1\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d3\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d1\":1.000, \"d1\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d2\":1.000, \"d2\":1.000}[], {\"a2\":1.000, \"b2\":1.000, \"c1\":1.000, \"d1\":1.000, \"d1\":1.000}>>> rule.examplesorange.data.table 'table'>>> rule.match_both```## おわりに- 速度が出るかはこれからチェック- scikit-learnとの違いはどこかに載っているのかな",
+    "coediting": false,
+    "created_at": "2016-09-11t22:57:20+09:00",
+    "group": null,
+    "id": "8c97f9c304b654b7d3d4",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "orange",
+        "versions": []
+      }
+    ],
+    "title": "orangeでpythonからaprioriを動かす",
+    "updated_at": "2016-09-11t22:57:20+09:00",
+    "url": "http://qiita.com/gingi99/items/8c97f9c304b654b7d3d4",
+    "user": {
+      "description": "",
+      "facebook_id": "",
+      "followees_count": 1,
+      "followers_count": 8,
+      "github_login_name": "gingi99",
+      "id": "gingi99",
+      "items_count": 28,
+      "linkedin_id": "",
+      "location": "tokyo, japan",
+      "name": "motoyuki ohki",
+      "organization": "",
+      "permanent_id": 69266,
+      "profile_image_url": "https://avatars.githubusercontent.com/u/1721212?v=3",
+      "twitter_screen_name": "gingi99_t",
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "はじめに「優しいit」という理念の基、itコンサルタントをしている亀井亮介と申します！主な仕事は要求分析・要件定義の上流工程から、開発のマネジメントまでしていますが、プライベートでウェブシステム開発をしています！優しいit活動の一環として「教育用ようにプログラミング可能なpcを安価に提供する」理念の「raspberry pi 3（通称ラズパイ）」　で製作したモノ・サービス・プログラムを紹介します！今回は、ラズパイコンテスト2016に応募したdocker利用のサンプルを紹介します！温度を1分ごとに自動計測し、docker上のデータベース（mysql）に登録し、ブラウザで温度を閲覧できるサンプルです！githubにファイルを上げているので、興味のある方は使ってくださいね！目次目的準備環境構築動作確認終わりに1. 目的1-1. dockerを利用したウェブサーバ構築の提案ラズパイ好きの方で「電子工作は得意だけど、ネットに公開となるとよく分からない…」という方も多いのではないでしょうか？ラズパイにウェブサーバを構築することもできるのですが、アプリケーションサーバやら、データベースサーバやらインストールは面倒だし、煩わしいし、試みても動かなかった…ウェブサーバ構築は、敷居が高いと思われているのでしょうか？誰でもできるだけ簡単にウェブサーバ構築をできるように、コンテナ技術dockerを利用して、少ない手間でウェブサーバ構築する事例を紹介します！1-2. ラズパイにサーバを構築する際の課題ラズパイのosはlinux系os\"raspbian\"であるために、ウェブサーバのapacheやデータベースサーバのmysqlをインストールできますが、次のような課題もあります。不具合が発生した時に何が原因か分からない。ウェブサーバやデータベースのインストールや設定が煩雑ウェブサーバやデータベースサーバの設定のやり直しがやりにくい不具合が発生した時に何が原因か分からない。電子工作をする場合、温度取得などのシステムとウェブサーバなどの仕組みを同じマシンに構築するため問題が発生した時に、問題の切り分けが難しいです。ウェブサーバやデータベースのインストールや設定が煩雑ウェブサーバapacheやデータベースサーバのmysqlなどをインストールすることはできますが、インストールや設定に手間がかかります。経験された方もいると思いますが、きちんとメモなどを取らないと、正しい設定がわからなくなったり、なんとなく動いている状態になります。ウェブサーバやデータベースサーバの設定のやり直しがやりにくいウェブサーバやデータベースの設定をやり直したい場合、既存の環境に手を入れるために、動かなくなったらどうしようなどの不安が尽きません。1-3. dockerで解決！不具合が発生した時に何が原因か分からない。dockerはコンテナと呼ばれる技術を使っています。ラズパイ上に「仮想的なos」を立ち上げます。アプリケーションコンテナ、データベースコンテナと明確に役割を分担し、ラズパイ本体のosは温度センサ・湿度センサ・照度センサなどのハードウェアとの通信に特化します。不具合が発生した時に、原因を探る際に問題の切り分けがやりやすくなります！ウェブサーバやデータベースのインストールや設定が煩雑dockerを利用すると、煩わしいミドルウェアのインストールから、難しい設定までが施されたイメージファイルを無料で利用できます！イメージファイルはオフィシャルのものから、細かくカスタマイズされたものもあり、プラモデルを組み立てるように組み合わせて使うことができます！ウェブサーバやデータベースサーバの設定のやり直しがやりにくいdockerはインストールや設定を１つのファイルにまとめることが可能です。設定が間違えていたら、そのファイルを元に、別の環境で実験をします。もし、にっちもさっちもいかなくてもそのコンテんを捨ててしまい、うまくできている設定ファイルを再度呼び込みやり直しをすることが可能です。dockerはイメージファイルを使えば、並列化（いつでもどこでも同じ環境を構築）することができるので、移植もスムーズに行えます！1-4. dockerをラズパイで利用する場合の課題dockerにも課題があります。一般的なサーバはx86_64アーキテクチャであり、docker hubのイメージもほとんどがx86_64アーキテクチャのイメージです。raspberry piのarmv7lアーキテクチャのイメージが少なく、raspberry pi + dockerの情報もまだ少ない状況です。今回は、このような現状を踏まえ、raspberry上でdockerを利用するための事例を紹介します！1-5. 今回のサンプル温度を定点観測し、データベースに記録し、ウェブサーバで閲覧します！①　ラズパイ本体側で、デジタル温度センサで取得します②　取得した温度はプログラムからapiを通して、データベースに登録されます。③　ウェブブラウザでは、データベースに登録された温度を表示することができます。これらは私のgithub上に置いてあり、比較的簡単な手順で、構築することができます。これがdockerの利点の一つです。環境構築は「3. 環境を構築」で解説します！2. 準備dockerとgitがインストールされていない方は下記の記事をご覧ください。raspberrypi3（ラズパイ）にdockerとgitをインストール3. 環境構築早速、dockerを利用して、アプリケーションコンテナ、データベースコンテナ、データコンテナを構築します！詳細は下記記事をご覧ください！raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】動画版もあります！3-1. 構築手順gitでクローンしファイルをダウンロード$ git clone git@github.com:ryosukekamei/rpi-python-bottle.git※パスワードを求められたら、rsaキーを作成した時のパスワードを入力クローンされたフォルダに移動$ cd rpi-python-bottledocker-composeでデータコンテナとデータベースコンテナをビルドし起動$ docker-compose up -d※私の環境で３分くらいでした。イメージを確認$ docker imagesコンテナを確認$ docker ps -aデータベースコンテナにログイン$ docker exec -it rpi-python-bottle-db bashサンプルのテーブルとデータを入力# mysql -u bottle -pbottle measurement &lt; /docker-entrypoint-initdb.d/create_table.sql※sqlはサンプルのテーブルとデータを入力しています。データーベースコンテナをログアウト# (contrl + p, control + q)※ exitを使うとコンテナも止めてしまいますので注意してください。アプリケーションコンテナをビルド$ docker build -t hypriot/rpi-python .※私の環境で１時間くらいかかりました。のんびり待ちましょうアプリケーションコンテナを起動しログイン$ docker run --name rpi-python-bottle-app -it hypriot/rpi-python bashサーバを起動# /usr/local/bin/python3 /home/bottle/server.pyブラウザで開くと、下記のように表示されます。3-2. フォルダ構成git cloneすると次のようなフォルダ構成になります！3-3. /app/server.pyデータベースに登録された温度データと、データ登録用のapiです。@route('/list')温度データをsqlのselect文で取得し、一覧表示します。@route('/input_temperature')温度データを受け取り、sqlのinsert文を生成し登録します。形式例：http://172.17.0.4:8080/input_temperature?server_id=1&amp;temperature=29&amp;user_id=1server_id : サーバのid（サンプルでは固定値。今後の拡張性を考慮）temperature : 温度センサで取得した温度user_id : ユーザid（サンプルでは固定値。今後の拡張性を考慮）詳細は#で始まるコメントに記載をしています。/app/server.py# bottleのライブラリfrom bottle import route, run, request# mysqlドライバはmysql.connectorimport mysql.connector# 補足# 本当はテンプレートを入れるとhtmlが綺麗になります。# その辺は後日…# hostのipアドレスは、$ docker inspect {データベースのコンテナ名}で調べる# mysqlのユーザやパスワード、データベースはdocker-compose.ymlで設定したもの# user     : mysql_user# password : mysql_password# database : mysql_databaseconnector = mysql.connector.connect (            user     = 'bottle',            password = 'bottle',            host     = '172.17.0.3',            database = 'measurement')@route('/list')def list():    # 温度を表示    cursor = connector.cursor()    cursor.execute(\"select `id`, `temperature`, `careted_at` from temperatures\")    disp  = \"&lt;table&gt;\"    # ヘッダー    disp += \"&lt;tr&gt;&lt;th&gt;id&lt;/th&gt;&lt;th&gt;温度&lt;/th&gt;&lt;th&gt;登録日&lt;/th&gt;&lt;/tr&gt;\"    # 一覧部分    for row in cursor.fetchall():        disp += \"&lt;tr&gt;&lt;td&gt;\" + str(row[0]) + \"&lt;/td&gt;&lt;td&gt;\" + str(row[1]) + \"&lt;/td&gt;&lt;td&gt;\" + str(row[2]) + \"&lt;/td&gt;&lt;/tr&gt;\"    disp += \"&lt;/table&gt;\"    cursor.close    return \"dbから取得 \"+disp@route('/input_temperature')def input_temperature():    # 温度を入力    cursor = connector.cursor()    cursor.execute(\"insert into `temperatures` (`server_id`, `temperature`, `careted_at`, `careted_user`, `updated_at`, `updated_user`) values (\" + request.query.server_id + \", \" + request.query.temperature + \", now(), \" + request.query.user_id + \", now(), \" + request.query.user_id + \")\")    # コミット    connector.commit();    cursor.close    return \"ok\"# コネクターをクローズconnector.close# サーバ起動run(host='0.0.0.0', port=8080, debug=true, reloader=true)3-4. digital_temperature_sensor_for_api.py1分ごとに、温度センサから、i2c経由で温度を取得し、データ登録apiにアクセスします。apiの値の例http://172.17.0.4:8080/input_temperature?server_id=1&amp;temperature=29&amp;user_id=1digital_temperature_sensor_for_api.py# 準備# $ sudo apt-get install libi2c-dev # $ sudo sh -c 'echo \"options i2c_bcm2708 combined=1\" &gt;&gt; /etc/modprobe.d/i2c.conf'# gpioを制御するライブラリimport wiringpi# タイマーのライブラリimport time# i2cデバイスからの読み取りに必要なライブラリを呼び出すimport osimport struct# urlアクセスimport urllib.request# i2cのインスタンスを作成wiringpi.wiringpisetup()i2c = wiringpi.i2c()# i2cの設定# 通信する機器のi2cアドレスを指定temperture_dev = i2c.setup(0x48)# 温度を16ビットのデータ取得# その他めレジスタ0x03に設定i2c.writereg8(temperture_dev, 0x03, 0x80)while true:    # 温度センサーの2バイト分を読み取る    temperture_data = struct.unpack('2b', os.read(temperture_dev, 2))    # 値が2バイトずつ分かれるので1つにまとめる    temperture = ( ( temperture_data[0] &lt;&lt; 8 ) + temperture_data[1] )    # 負の値の場合は数値を変換    if ( temperture_data[0] &gt;= 0x80 ):        temperture = temperture - 65536    # 取得した値を128で割って温度を算出    temperture = temperture / 128    # 温度表示    print ( \"温度 \" , temperture , \"c\" )    response = urllib.request.urlopen('http://172.17.0.4:8080/input_temperature?server_id=1&amp;temperature=' + str(temperture) + '&amp;user_id=1')    data = response.read()    print ( \"サーバレスポンス : \", data )    # 1分ごと    time.sleep(60)3-5. /docker/mysql/my.cnfmysqlの日本語対応ファイルです。実動的に設定するので、深い説明は省略します。/docker/mysql/my.cnf[mysqld]innodb_strict_modeinnodb_file_format = barracudainnodb_file_per_tableinnodb_large_prefix = 1character-set-server=utf8mb4skip-character-set-client-handshakemax_allowed_packet = 32mskip-networking = 0[client]default-character-set=utf8mb43-6. docker-compose.ymlデータベースコンテナとデータコンテナを一元管理します。詳細は下記記事をご覧ください！raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】3-7. dockerfileアプリケーションコンテナの設定ファイルです。こちらも詳細は下記記事をご覧ください！raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】3-8. /initdb.d/create_table.sqlテーブル定義と、動作確認用の初期データを登録するsqlです。構築時に、コマンドを使い実行しています。/initdb.d/create_table.sqluse measurement;create table `temperatures` (  `id`           int(11) not null auto_increment,  `server_id`    int(11) not null,  `temperature`  int(11) not null,  `careted_at`   datetime not null,  `careted_user` int(11) not null,  `updated_at`   datetime not null,  `updated_user` int(11) not null,  key `id` (`id`)) engine=innodb default charset=utf8;insert into `temperatures`   (`id`, `server_id`, `temperature`, `careted_at`, `careted_user`, `updated_at`, `updated_user`)   values   (1, 1, 29, now(), 1, now(), 1);3-9. readme.mdgitで自動生成されるreadmeファイルです。動作には関係ありません。（もう少し丁寧に書くと良いのですが…）3-10. /vim/python.vimアプリケーションコンテナでvimを利用するときに、pythonを書くために便利な設定をしています。こちらもアプリケーションのイメージを作成時に自動的にビルドしています。3-11. 回路図4. 動作確認いよいよ動作確認です。4-1. ラズパイ本体側で、温度をデジタル温度センサで取得ラズパイで、git cloneで作成されたフォルダに\"digital_temperature_sensor_for_api.py\"というファイルがあるので起動します。温度を取得する$ cd {git cloneしたフォルダ}/rpi-python-bottle$ sudo python3 digital_temperature_sensor_for_api.py次のように温度が取得されます（画像には引数がついているのですが、無視されています）。取得した温度はプログラムからapiを通して、データベースに登録されます。4-2. ウェブブラウザでは、データベースに登録された温度を表示ラズパイのブラウザで\"http://172.17.0.4:8080/list\"にアクセスすると、次のような表示を確認することが可能です！/vim/python.vimsetl expandtabsetl tabstop=4setl shiftwidth=4setl softtabstop=0autocmd bufwritepre * :%s/\\s\\+$//gesetlocal textwidth=805. 終わりに今回は温度センサを利用しましたが、明るさを測る照度センサ、湿度を測る湿度センサを使えば、照度・湿度を測ることが可能です！遠隔地から、温度・照度・湿度を見たいというニーズがあればこれで対応できますね！これ以外にも何か役に立ちそうなことがあれば応用したいと考えています！サイトマップraspberry pi 3 （ラズパイ）セットアップraspberry pi 3インストール→無線lan→日本語入出力→macから操作raspberry pi 3 にdockerを乗せてpython+mysql環境を構築！raspberrypi3（ラズパイ）にdockerをインストールraspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【試行錯誤編】raspberry pi 3でエアコン一体型パソコン「airpi」を作る！raspberry pi 3でエアコン一体型パソコン「airpi」を作る！ついに…raspberry pi 3でpythonを使いラジコンを作る！ボタン押している間モーターが動く磁石を近づけている間モータが動く磁石を近づけるとモータが動き、自動で止まるraspberry pi 3 （ラズパイ）とpythonで遊ぼう ラズパイ奮闘の記録raspberry pi 3でプログラミングをする node-redと普通にプログラミングraspberry pi 3でpythonを使いledを光らせる（hello world）raspberry pi 3でスイッチの状態を検出するraspberry pi 3でpythonを使いサーボモータを動かすraspberry pi 3でpythonを使いモータードライバーを使いモータを制御する！raspberry pi 3でpythonを使いスライドスイッチを検出する！raspberry pi 3でpythonを使い磁石スイッチを検出する！raspberry pi 3でpythonを使い温度を検出する！raspberry pi 3でpythonを使いブザーを鳴らす！raspberry pi 3でpythonを使いa/dコンバーターでアナログ信号を検出する！raspberry pi 3でpythonを使い「明るさ」を検出する！raspberry pi 3でpythonを使い「温度（a/dコンバーターを利用）」を検出する！raspberry pi 3でpythonを使い「7セグメントled」に出力する！raspberry pi 3でpythonを使いスイッチ制御でledを光らせる！raspberry pi 3でpythonを使い暗くなったらledを光らせる！テスト駆動開発を重点においた規則コーディング規則「優しいコードを書こう」（fuelphp）命名規則「3ヶ月後の自分自身に優しく、チームに優しく、まだ見ぬメンバーに優しく」docker+pythonでwebアプリケーション開発docker上のcentosにpython3と、関連ライブラリpip, virtualenvとフレームワークdjango, bottle, flaskのインストール！これらをまとめたdockerfile付き！開発しやすい環境構築（docker+php）dockerを利用しapacheにphp環境 + eclipseを連携dockerを利用したfuelphp開発環境構築docker利用したfuelphp開発環境の初期設定とscaffoldを利用してcrudスケルトン作成fuelphpのデータベースマイグレーション",
+    "body": "# はじめに「優しいit」という理念の基、itコンサルタントをしている亀井亮介と申します！主な仕事は要求分析・要件定義の上流工程から、開発のマネジメントまでしていますが、プライベートでウェブシステム開発をしています！優しいit活動の一環として「教育用ようにプログラミング可能なpcを安価に提供する」理念の「raspberry pi 3（通称ラズパイ）」　で製作したモノ・サービス・プログラムを紹介します！今回は、ラズパイコンテスト2016に応募したdocker利用のサンプルを紹介します！温度を1分ごとに自動計測し、docker上のデータベース（mysql）に登録し、ブラウザで温度を閲覧できるサンプルです！[github](https://github.com/ryosukekamei/rpi-python-bottle)にファイルを上げているので、興味のある方は使ってくださいね！## 目次1. 目的2. 準備3. 環境構築4. 動作確認5. 終わりに## 1. 目的### 1-1. dockerを利用したウェブサーバ構築の提案ラズパイ好きの方で「電子工作は得意だけど、ネットに公開となるとよく分からない…」という方も多いのではないでしょうか？ラズパイにウェブサーバを構築することもできるのですが、アプリケーションサーバやら、データベースサーバやらインストールは面倒だし、煩わしいし、試みても動かなかった…ウェブサーバ構築は、敷居が高いと思われているのでしょうか？誰でもできるだけ簡単にウェブサーバ構築をできるように、コンテナ技術dockerを利用して、少ない手間でウェブサーバ構築する事例を紹介します！### 1-2. ラズパイにサーバを構築する際の課題ラズパイのosはlinux系os\"raspbian\"であるために、ウェブサーバのapacheやデータベースサーバのmysqlをインストールできますが、次のような課題もあります。1. 不具合が発生した時に何が原因か分からない。2. ウェブサーバやデータベースのインストールや設定が煩雑3. ウェブサーバやデータベースサーバの設定のやり直しがやりにくい![ラズパイ上にウェブサーバを構築する際の課題](https://docs.google.com/drawings/d/1ypmcfsugmcd7pa9sek1ezt80-aktoc0furm3h6io8io/pub?w=744&h=861)1. 不具合が発生した時に何が原因か分からない。電子工作をする場合、温度取得などのシステムとウェブサーバなどの仕組みを同じマシンに構築するため問題が発生した時に、問題の切り分けが難しいです。2. ウェブサーバやデータベースのインストールや設定が煩雑ウェブサーバapacheやデータベースサーバのmysqlなどをインストールすることはできますが、インストールや設定に手間がかかります。経験された方もいると思いますが、きちんとメモなどを取らないと、正しい設定がわからなくなったり、なんとなく動いている状態になります。3. ウェブサーバやデータベースサーバの設定のやり直しがやりにくいウェブサーバやデータベースの設定をやり直したい場合、既存の環境に手を入れるために、動かなくなったらどうしようなどの不安が尽きません。### 1-3. dockerで解決！1. 不具合が発生した時に何が原因か分からない。dockerはコンテナと呼ばれる技術を使っています。ラズパイ上に「仮想的なos」を立ち上げます。アプリケーションコンテナ、データベースコンテナと明確に役割を分担し、ラズパイ本体のosは温度センサ・湿度センサ・照度センサなどのハードウェアとの通信に特化します。不具合が発生した時に、原因を探る際に問題の切り分けがやりやすくなります！2. ウェブサーバやデータベースのインストールや設定が煩雑dockerを利用すると、煩わしいミドルウェアのインストールから、難しい設定までが施されたイメージファイルを無料で利用できます！イメージファイルはオフィシャルのものから、細かくカスタマイズされたものもあり、プラモデルを組み立てるように組み合わせて使うことができます！3. ウェブサーバやデータベースサーバの設定のやり直しがやりにくいdockerはインストールや設定を１つのファイルにまとめることが可能です。設定が間違えていたら、そのファイルを元に、別の環境で実験をします。もし、にっちもさっちもいかなくてもそのコンテんを捨ててしまい、うまくできている設定ファイルを再度呼び込みやり直しをすることが可能です。dockerはイメージファイルを使えば、並列化（いつでもどこでも同じ環境を構築）することができるので、移植もスムーズに行えます！### 1-4. dockerをラズパイで利用する場合の課題dockerにも課題があります。一般的なサーバはx86_64アーキテクチャであり、docker hubのイメージもほとんどがx86_64アーキテクチャのイメージです。raspberry piのarmv7lアーキテクチャのイメージが少なく、raspberry pi + dockerの情報もまだ少ない状況です。今回は、このような現状を踏まえ、raspberry上でdockerを利用するための事例を紹介します！### 1-5. 今回のサンプル温度を定点観測し、データベースに記録し、ウェブサーバで閲覧します！①　ラズパイ本体側で、デジタル温度センサで取得します![ラズパイで温度取得](https://docs.google.com/drawings/d/1l2yaqwmvh8pfhl68ra8pfjkveltqupofpohjj6oxzny/pub?w=1439&h=541)②　取得した温度はプログラムからapiを通して、データベースに登録されます。![システム構成図](https://docs.google.com/drawings/d/13-ng2udovjzw994eqsu_c-jukyprvkcvbv01ioeqsm0/pub?w=727&h=596)③　ウェブブラウザでは、データベースに登録された温度を表示することができます。![ブラウザ表示](https://docs.google.com/drawings/d/1bkch1bcg7by2rcu4vrgskzw-37pr6j4ff4lhr-av7pc/pub?w=1442&h=640)これらは私のgithub上に置いてあり、比較的簡単な手順で、構築することができます。これがdockerの利点の一つです。環境構築は「3. 環境を構築」で解説します！## 2. 準備dockerとgitがインストールされていない方は下記の記事をご覧ください。[raspberrypi3（ラズパイ）にdockerとgitをインストール](http://qiita.com/ryosukekamei/items/147948845cd4c2c1d7b4)## 3. 環境構築早速、dockerを利用して、アプリケーションコンテナ、データベースコンテナ、データコンテナを構築します！詳細は下記記事をご覧ください！[raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】](http://qiita.com/ryosukekamei/items/3c79b9f3c489908a529c)動画版もあります！[![動いている様子](http://img.youtube.com/vi/-ubsjv4ss2m/0.jpg)](http://www.youtube.com/watch?v=-ubsjv4ss2m)### 3-1. 構築手順```bash:gitでクローンしファイルをダウンロード$ git clone git@github.com:ryosukekamei/rpi-python-bottle.git```※パスワードを求められたら、rsaキーを作成した時のパスワードを入力```bash:クローンされたフォルダに移動$ cd rpi-python-bottle``````bash:docker-composeでデータコンテナとデータベースコンテナをビルドし起動$ docker-compose up -d```※私の環境で３分くらいでした。```bash:イメージを確認$ docker images``````bash:コンテナを確認$ docker ps -a``````bash:データベースコンテナにログイン$ docker exec -it rpi-python-bottle-db bash``````bash:サンプルのテーブルとデータを入力# mysql -u bottle -pbottle measurement ### 3-2. フォルダ構成git cloneすると次のようなフォルダ構成になります！### 3-3. /app/server.pyデータベースに登録された温度データと、データ登録用のapiです。@route('/list')温度データをsqlのselect文で取得し、一覧表示します。@route('/input_temperature')温度データを受け取り、sqlのinsert文を生成し登録します。形式例：http://172.17.0.4:8080/input_temperature?server_id=1&temperature=29&user_id=1server_id : サーバのid（サンプルでは固定値。今後の拡張性を考慮）temperature : 温度センサで取得した温度user_id : ユーザid（サンプルでは固定値。今後の拡張性を考慮）詳細は#で始まるコメントに記載をしています。```py3:/app/server.py# bottleのライブラリfrom bottle import route, run, request# mysqlドライバはmysql.connectorimport mysql.connector# 補足# 本当はテンプレートを入れるとhtmlが綺麗になります。# その辺は後日…# hostのipアドレスは、$ docker inspect {データベースのコンテナ名}で調べる# mysqlのユーザやパスワード、データベースはdocker-compose.ymlで設定したもの# user     : mysql_user# password : mysql_password# database : mysql_databaseconnector = mysql.connector.connect (            user     = 'bottle',            password = 'bottle',            host     = '172.17.0.3',            database = 'measurement')\t\t\t@route('/list')def list():    # 温度を表示    cursor = connector.cursor()    cursor.execute(\"select `id`, `temperature`, `careted_at` from temperatures\")    disp  = \"\"    # ヘッダー    disp += \"id温度登録日\"        # 一覧部分    for row in cursor.fetchall():        disp += \"\" + str(row[0]) + \"\" + str(row[1]) + \"\" + str(row[2]) + \"\"        disp += \"\"        cursor.close    return \"dbから取得 \"+disp@route('/input_temperature')def input_temperature():    # 温度を入力    cursor = connector.cursor()    cursor.execute(\"insert into `temperatures` (`server_id`, `temperature`, `careted_at`, `careted_user`, `updated_at`, `updated_user`) values (\" + request.query.server_id + \", \" + request.query.temperature + \", now(), \" + request.query.user_id + \", now(), \" + request.query.user_id + \")\")    # コミット    connector.commit();    cursor.close    return \"ok\"    # コネクターをクローズconnector.close# サーバ起動run(host='0.0.0.0', port=8080, debug=true, reloader=true)```### 3-4. digital_temperature_sensor_for_api.py1分ごとに、温度センサから、i2c経由で温度を取得し、データ登録apiにアクセスします。apiの値の例http://172.17.0.4:8080/input_temperature?server_id=1&temperature=29&user_id=1```py3:digital_temperature_sensor_for_api.py# 準備# $ sudo apt-get install libi2c-dev # $ sudo sh -c 'echo \"options i2c_bcm2708 combined=1\" >> /etc/modprobe.d/i2c.conf'# gpioを制御するライブラリimport wiringpi# タイマーのライブラリimport time# i2cデバイスからの読み取りに必要なライブラリを呼び出すimport osimport struct# urlアクセスimport urllib.request# i2cのインスタンスを作成wiringpi.wiringpisetup()i2c = wiringpi.i2c()# i2cの設定# 通信する機器のi2cアドレスを指定temperture_dev = i2c.setup(0x48)# 温度を16ビットのデータ取得# その他めレジスタ0x03に設定i2c.writereg8(temperture_dev, 0x03, 0x80)while true:    # 温度センサーの2バイト分を読み取る    temperture_data = struct.unpack('2b', os.read(temperture_dev, 2))    # 値が2バイトずつ分かれるので1つにまとめる    temperture = ( ( temperture_data[0] = 0x80 ):        temperture = temperture - 65536    # 取得した値を128で割って温度を算出    temperture = temperture / 128    # 温度表示    print ( \"温度 \" , temperture , \"c\" )        response = urllib.request.urlopen('http://172.17.0.4:8080/input_temperature?server_id=1&temperature=' + str(temperture) + '&user_id=1')    data = response.read()        print ( \"サーバレスポンス : \", data )    # 1分ごと    time.sleep(60)```### 3-5. /docker/mysql/my.cnfmysqlの日本語対応ファイルです。実動的に設定するので、深い説明は省略します。```mysql:/docker/mysql/my.cnf[mysqld]innodb_strict_modeinnodb_file_format = barracudainnodb_file_per_tableinnodb_large_prefix = 1character-set-server=utf8mb4skip-character-set-client-handshakemax_allowed_packet = 32mskip-networking = 0[client]default-character-set=utf8mb4```### 3-6. docker-compose.ymlデータベースコンテナとデータコンテナを一元管理します。詳細は下記記事をご覧ください！[raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】](http://qiita.com/ryosukekamei/items/3c79b9f3c489908a529c)### 3-7. dockerfileアプリケーションコンテナの設定ファイルです。こちらも詳細は下記記事をご覧ください！[raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】](http://qiita.com/ryosukekamei/items/3c79b9f3c489908a529c)### 3-8. /initdb.d/create_table.sqlテーブル定義と、動作確認用の初期データを登録するsqlです。構築時に、コマンドを使い実行しています。```sql:/initdb.d/create_table.sqluse measurement;create table `temperatures` (  `id`           int(11) not null auto_increment,  `server_id`    int(11) not null,  `temperature`  int(11) not null,  `careted_at`   datetime not null,  `careted_user` int(11) not null,  `updated_at`   datetime not null,  `updated_user` int(11) not null,  key `id` (`id`)) engine=innodb default charset=utf8;insert into `temperatures`   (`id`, `server_id`, `temperature`, `careted_at`, `careted_user`, `updated_at`, `updated_user`)   values   (1, 1, 29, now(), 1, now(), 1);```### 3-9. readme.mdgitで自動生成されるreadmeファイルです。動作には関係ありません。（もう少し丁寧に書くと良いのですが…）### 3-10. /vim/python.vimアプリケーションコンテナでvimを利用するときに、pythonを書くために便利な設定をしています。こちらもアプリケーションのイメージを作成時に自動的にビルドしています。### 3-11. 回路図![デジタル温度センサで温度取得](https://docs.google.com/drawings/d/1iqr76pznegqurnv5hofekdhychhfxchy0jlqe1x6jy8/pub?w=857&h=656)## 4. 動作確認いよいよ動作確認です。### 4-1. ラズパイ本体側で、温度をデジタル温度センサで取得ラズパイで、git cloneで作成されたフォルダに\"digital_temperature_sensor_for_api.py\"というファイルがあるので起動します。```bash:温度を取得する$ cd {git cloneしたフォルダ}/rpi-python-bottle$ sudo python3 digital_temperature_sensor_for_api.py```次のように温度が取得されます（画像には引数がついているのですが、無視されています）。![ラズパイで温度取得](https://docs.google.com/drawings/d/1l2yaqwmvh8pfhl68ra8pfjkveltqupofpohjj6oxzny/pub?w=1439&h=541)取得した温度はプログラムからapiを通して、データベースに登録されます。![システム構成図](https://docs.google.com/drawings/d/13-ng2udovjzw994eqsu_c-jukyprvkcvbv01ioeqsm0/pub?w=727&h=596)### 4-2. ウェブブラウザでは、データベースに登録された温度を表示ラズパイのブラウザで\"http://172.17.0.4:8080/list\"にアクセスすると、次のような表示を確認することが可能です！![ブラウザ表示](https://docs.google.com/drawings/d/1bkch1bcg7by2rcu4vrgskzw-37pr6j4ff4lhr-av7pc/pub?w=1442&h=640)```vim:/vim/python.vimsetl expandtabsetl tabstop=4setl shiftwidth=4setl softtabstop=0autocmd bufwritepre * :%s/\\s\\+$//gesetlocal textwidth=80```## 5. 終わりに今回は温度センサを利用しましたが、明るさを測る照度センサ、湿度を測る湿度センサを使えば、照度・湿度を測ることが可能です！遠隔地から、温度・照度・湿度を見たいというニーズがあればこれで対応できますね！これ以外にも何か役に立ちそうなことがあれば応用したいと考えています！# サイトマップ## raspberry pi 3 （ラズパイ）セットアップ[raspberry pi 3インストール→無線lan→日本語入出力→macから操作](http://qiita.com/ryosukekamei/items/5ecf2aa5d5cda848fe51)## raspberry pi 3 にdockerを乗せてpython+mysql環境を構築！[raspberrypi3（ラズパイ）にdockerをインストール](http://qiita.com/ryosukekamei/items/147948845cd4c2c1d7b4)[raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【簡単構築編】](http://qiita.com/ryosukekamei/items/3c79b9f3c489908a529c)[raspberrypi3（ラズパイ）にdockerでpython+bottle+mysql環境構築する！【試行錯誤編】](http://qiita.com/ryosukekamei/items/5905240b4807fab00bc6)## raspberry pi 3でエアコン一体型パソコン「airpi」を作る！[raspberry pi 3でエアコン一体型パソコン「airpi」を作る！](http://qiita.com/ryosukekamei/items/61bba11be87b9d95bd68)## ついに…raspberry pi 3でpythonを使いラジコンを作る！[ボタン押している間モーターが動く](http://qiita.com/ryosukekamei/items/ea52f615251d08739ea9)[磁石を近づけている間モータが動く](http://qiita.com/ryosukekamei/items/18619f3a7ad879dca298)[磁石を近づけるとモータが動き、自動で止まる](http://qiita.com/ryosukekamei/items/7010d6565e0d6b09642a)## raspberry pi 3 （ラズパイ）とpythonで遊ぼう ラズパイ奮闘の記録[raspberry pi 3でプログラミングをする node-redと普通にプログラミング](http://qiita.com/ryosukekamei/items/746825f6ca039feb8cfa)[raspberry pi 3でpythonを使いledを光らせる（hello world）](http://qiita.com/ryosukekamei/items/79ee090f1b68014241ab)[raspberry pi 3でスイッチの状態を検出する](http://qiita.com/ryosukekamei/items/d3b787896a07943b3932)[raspberry pi 3でpythonを使いサーボモータを動かす](http://qiita.com/ryosukekamei/items/9b15007bf1b77d33764f)[raspberry pi 3でpythonを使いモータードライバーを使いモータを制御する！](http://qiita.com/ryosukekamei/items/147de58738084826f749)[raspberry pi 3でpythonを使いスライドスイッチを検出する！](http://qiita.com/ryosukekamei/items/337f6bf7654540d79ea9)[raspberry pi 3でpythonを使い磁石スイッチを検出する！](http://qiita.com/ryosukekamei/items/651ec3d4a235ac655827)[raspberry pi 3でpythonを使い温度を検出する！](http://qiita.com/ryosukekamei/items/cb90f7f4d41f8ed25e88)[raspberry pi 3でpythonを使いブザーを鳴らす！](http://qiita.com/ryosukekamei/items/aaa273de15f49b011ea6)[raspberry pi 3でpythonを使いa/dコンバーターでアナログ信号を検出する！](http://qiita.com/ryosukekamei/items/387e4a1fafb1d27a220f)[raspberry pi 3でpythonを使い「明るさ」を検出する！](http://qiita.com/ryosukekamei/items/301e19fc6d66a41a2a35)[raspberry pi 3でpythonを使い「温度（a/dコンバーターを利用）」を検出する！](http://qiita.com/ryosukekamei/items/5b5c50835ccfc374dcea)[raspberry pi 3でpythonを使い「7セグメントled」に出力する！](http://qiita.com/ryosukekamei/items/cb7a5e45c987cf2c45a2)[raspberry pi 3でpythonを使いスイッチ制御でledを光らせる！](http://qiita.com/ryosukekamei/items/5c19819a2153b0a997b6)[raspberry pi 3でpythonを使い暗くなったらledを光らせる！](http://qiita.com/ryosukekamei/items/ea52f615251d08739ea9)## テスト駆動開発を重点においた規則[コーディング規則「優しいコードを書こう」（fuelphp）](http://qiita.com/ryosukekamei/items/e6dbe03dd24dd1511f19)[命名規則「3ヶ月後の自分自身に優しく、チームに優しく、まだ見ぬメンバーに優しく」](http://qiita.com/ryosukekamei/items/0f697d2e2902b7488223)## docker+pythonでwebアプリケーション開発[docker上のcentosにpython3と、関連ライブラリpip, virtualenvとフレームワークdjango, bottle, flaskのインストール！これらをまとめたdockerfile付き！](http://qiita.com/ryosukekamei/items/eca9687162b7fe122094)## 開発しやすい環境構築（docker+php）[dockerを利用しapacheにphp環境 + eclipseを連携](http://qiita.com/ryosukekamei/items/0db0130374bbc9ced16f)[dockerを利用したfuelphp開発環境構築](http://qiita.com/ryosukekamei/items/d97c53c1a86b27e6ee32)[docker利用したfuelphp開発環境の初期設定とscaffoldを利用してcrudスケルトン作成](http://qiita.com/ryosukekamei/items/714104b624eb3980b308)[fuelphpのデータベースマイグレーション](http://qiita.com/ryosukekamei/items/088a5a3ba022ac6ada3a)",
+    "coediting": false,
+    "created_at": "2016-09-11t22:41:04+09:00",
+    "group": null,
+    "id": "075ba9687396319c0be5",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "mysql",
+        "versions": []
+      },
+      {
+        "name": "raspberrypi",
+        "versions": []
+      },
+      {
+        "name": "docker",
+        "versions": []
+      },
+      {
+        "name": "bottle",
+        "versions": []
+      }
+    ],
+    "title": "raspberry pi 3（ラズパイ）を使って温度を自動計測し、自動的にサーバ上（docker python3+bottle+mysql）にアップして閲覧する！",
+    "updated_at": "2016-09-11t22:41:04+09:00",
+    "url": "http://qiita.com/ryosukekamei/items/075ba9687396319c0be5",
+    "user": {
+      "description": "「優しいit」という理念の基、itコンサルタントをしている亀井亮介と申します！\r現在、仕事では要求分析から要件定義を中心に上流工程をしていますが、プログラムも書きます！2016年現在、ベンダーマネジメントが主な業務です！\r「資格試験勉強をすればするほど、社会貢献ができる？」ウェブサイトを運営しており、並行してシステム構築中 http://korejoap.info/\r子供が3人いまーす",
+      "facebook_id": "kameiryosuke",
+      "followees_count": 0,
+      "followers_count": 5,
+      "github_login_name": "ryosukekamei",
+      "id": "ryosukekamei",
+      "items_count": 34,
+      "linkedin_id": "",
+      "location": "okinawa, japan",
+      "name": "亀井 亮介",
+      "organization": "sr2s",
+      "permanent_id": 133154,
+      "profile_image_url": "https://avatars.githubusercontent.com/u/14170129?v=3",
+      "twitter_screen_name": "kameiryosuke",
+      "website_url": "http://sr2s.org/"
+    }
+  },
+  {
+    "rendered_body": "複数ノードのパケットキャプチャファイルからシーケンス図を出力するツールを作成した概要ネットワーク上の複数ノードで、wiresharkやtcpdumpで同時にパケットキャプチャしたファイルからパケットのシーケンス図をpng形式で出力するツールを作成した。言語はpython、seqdiagというシーケンス図を作成するライブラリを使わせていただいた。※ リファクタリングのご意見いただけると幸いです※ 2016/9/12 ソースのインデントが崩れていたため修正※ 2016/9/12 シーケンス図の色指定の対応済みツール作成の背景会社でお客さん環境のネットワーク遅延の調査のため、各通信ノードで採取したパケットの突き合わせを行った。パケットはpcap形式のためwiresharkで閲覧、はじめは複数wiresharkを開き目で突き合わせを行ったが無理。wiresharkの機能にフローダイアグラムという、特定コネクションを表示するツールがあるが、複数箇所で採取したパケットの突き合わせには使えないため断念。仕方がないのでexcel上にパケットのシーケンスを起こすことを決意。キャプチャファイルをクライアントからの特定ポート通信に絞り、パケットをエクスポートしたあとcsv形式に変換、excel上で手でシーケンス図を起こした。チームで議論するには役にたったが時間がかかり過ぎたし、２度と同じことを繰り返したくないのでツールを作成した。参考：その時の環境http client --- internet --- llb --- fw --- slb --- http server必要なものpython 2.7seqdiagパケットキャプチャファイル（csv形式）下記カラムの形式となっていること\"no.\",\"time\",\"source\",\"destination\",\"protocol\",\"length\",\"info\"timeカラムの時刻表示形式が wiresharkの時刻表示形式の\"日時\"形式になっていること日時形式(1973-06-14 01:02:03.123456）参考にしたサイトシーケンス図生成ツール seqdiag流れ環境構築python2.7をインストール$ curl -l -o https://www.python.org/ftp/python/2.7.12/python-2.7.12.tgz$ tar zxvf python-2.7.12.tgz$ cd python-2.7.12$ ./configure$ make &amp;&amp; make altinstallpipをインストール$ curl -kl https://raw.github.com/pypa/pip/master/contrib/get-pip.py | pythonyumが使えるように修正yumコマンドのインタプリタを既存のpython(version 2.6)を実行するように修正$ vi /usr/bin/yum例）下記のとおり修正#!/usr/bin/python2.6seqdiagをインストール$ pip install seqdiag今回作成したスクリプトを実行環境上に配置スクリプト名は ws2seqdiag.pyとしたシーケンス図の作成通信経路箇所でパケットキャプチャキャプチャファイルから特定ポートの通信のみエクスポートcsvファイルとして保存今回作成したツール実行環境上にcsvファイルを送信ツールを実行標準入力から通信間の対向機器の名称を入力シーケンス図が作成使い方今回は下記の環境をもとに使い方を説明client(windows 7) --- proxy(squid) --- server(nifty.comなど)通信経路箇所でパケットキャプチャclient(windows 7)上ではwireshark、proxy(squid)上ではtcpdumpを使用した例）クライアント上でのパケットキャプチャwiresharkを実行し、通信が終了したら保存するファイル名は任意、client.pcapとして保存例）プロキシサーバ上でのパケットキャプチャ$ tcpdump -i eth1 -w proxy.pcapファイル名は任意、proxy.pcapとして保存キャプチャファイルから特定ポートの通信のみエクスポート先ほどキャプチャしたファイルをwireshark上で開き特定ポートに絞る具体的には、3way handshakeのsynフラグを送っている際のポート番号を確認wireshark上でフィルタを行うtcp.port==ポート番号csvファイルとして保存wiresharkでcsv形式で保存する例）クライアント上でのパケットキャプチャファイル名は任意、client.csvとして保存例）プロキシサーバ上でのパケットキャプチャファイル名は任意、proxy.csvとして保存今回作成したツール実行環境上にcsvファイルを送信  ツールを実行今回は採取箇所が２箇所なので先ほどキャプチャしたファイルをクライアント側から近い順に引数として２ファイル渡して実行$ python ws2seqdiag.py client.csv proxy.csv 標準入力から通信間の対向機器の名称を入力ファイルごとに source-ip と destination-ip の２回、名前を入れるよう標準入力で入力を求められる下記の例はクライアントープロキシ間なので、\"client\"と\"proxy\"とした########################################file_name:client.csv########################################src ip:192.168.1.3 -&gt; src name: ???input src name &gt; clientdst ip:192.168.1.62 -&gt; dst name: ???input dst name &gt; proxy続いてプロキシサーバ間も入力も求められるので、\"proxy\"と\"sever\"とした########################################file_name:proxy.csv########################################src ip:192.168.1.3 -&gt; src name: ???input src name &gt; proxydst ip:192.168.1.62 -&gt; dst name: ???input dst name &gt; serverシーケンス図が作成out.png と out.diag というファイルが作成されるout.pngがpng形式のシーケンス図out.diagが画像生成の元となったseqdiag形式のファイルfile out.*out.diag: ascii text, with very long linesout.png:  png image data, 1856 x 31706, 8-bit/color rgba, non-interlacedツールについて処理の流れ引数でcsvファイルを渡すファイルごとにsynフラグから通信間を検出2の対向ノードの名前を標準入力で渡すipアドレスから3で指定した名前に置換seqdiag形式に出力seqdiagに渡して画像を出力ソースコード# -*- coding: utf-8 -*-import osimport subprocessimport sysimport csvimport re\"\"\" wiresharkのcsvファイルからseqdiagで読める形式に変換\"\"\"__author__ = \"yusuke watanabe\"__version__ = \"1.01\"__date__ = \"12 sep 2016\"class ws2seqdiag():    def __init__(self, files):        # 入力ファイルのリスト        self.files = files        # ファイルごとのsrc-ipとdst-ipのリスト        self.syn_list = list()        # 名前変換後のパケットのリスト        self.packet_list = list()        # diag形式に変換したパケットのリスト        self.seqdiag_list = list()        # 色情報の辞書        self.color_dict = {\"default\":\"blue\", \"urg\":\"red\", \"ack\":\"green\",             \"psh\":\"red\", \"rst\":\"red\", \"syn\":\"green\", \"fin\":\"green\"}    # synの通信方向で通信間を検出    def set_direction(self):        syn_pattern = re.compile('syn')        # csvファイルごとの処理        for in_file in self.files:            with open(in_file, 'rt') as fin:                cin = csv.reader(fin)                # シーケンスごとの処理                for packet in cin:                    # シーケンスからsynフラグを検出                    m = syn_pattern.search(str(packet))                    if m:                        # src-ipとdst-ipを辞書に格納                        self.syn_list.append({                            \"file_name\": in_file,                            \"src_ip\": str(packet[2]),                            \"dst_ip\": str(packet[3]),                        })                        break    # 標準入力からsrcとdstの名前を入力    def set_name(self):        # ファイルごとの処理        for syn in self.syn_list:            # csvファイル名の表示            print('########################################')            print('file_name:{}'.format(syn[\"file_name\"]))            print('########################################')            # src-ipの名前入力            print('src ip:{} -&gt; src name: ???'.format(syn[\"src_ip\"]))            sys.stdout.write('input src name &gt; ')            syn[\"src\"] = raw_input()            # dst-ipの名前入力            print('dst ip:{} -&gt; dst name: ???'.format(syn[\"dst_ip\"]))            sys.stdout.write('input dst name &gt; ')            syn[\"dst\"] = raw_input()    # src-ip, dst-ipの名前を変換    def convert_name(self):        # csvファイルのラベルを除外する正規表現を定義        num_pattern = re.compile('no.')        # ファイルごとの処理        for in_file in self.syn_list:            with open(in_file[\"file_name\"], 'rt') as fin:                cin = csv.reader(fin)                # シーケンスごとの処理                for packet in cin:                    # src-ipを名前に置換                    conv_src_packet = str(packet).replace(                        in_file[\"src_ip\"], in_file[\"src\"])                    # dst-ipを名前に置換                    conv_packet = conv_src_packet.replace(                        in_file[\"dst_ip\"], in_file[\"dst\"])                    # 置換後のシーケンスを\",\"で区切って辞書へ追加                    packet = conv_packet.split(\",\")                    # packet info用の文字列作成                    packet_info = \"\"                    for info in range(6, len(packet)):                        packet_info += packet[info]                    # ラベル以外の文字列をseqdiag形式に変換してリストへ追加                    m = num_pattern.search(str(packet))                    if not m:                        self.packet_list.append('{},{},{},{}'                        .format(packet[1], packet[2], packet[3], packet_info))    # diagファイルを作成    def create_diag(self):        # diagファイルがある場合は削除        out_file = os.path.exists('out.diag')        if out_file:            os.remove('out.diag')        # シーケンスを時系列に並び替え        self.packet_list.sort()        for i in self.packet_list:            packet = i.split(\",\")            color = \"\"            for j in self.color_dict.keys():                if re.search(str(j),packet[3]):                    color = self.color_dict[j]                    break            else:                color = self.color_dict[\"default\"]            self.seqdiag_list.append('  {} -&gt; {} [ diagonal, label = \" {}\{} \", color = {} ]; '            .format(packet[1], packet[2], packet[0], packet[3], color))        # diagファイルを作成        with open('out.diag', 'a') as fout:            fout.write('{}\'.format('seqdiag {'))            # edgeの長さを指定            fout.write('{}\'.format(' edge_length = 600;'))            # spanの高さを指定            fout.write('{}\'.format(' span_height = 10;'))            # フォントサイズを指定            fout.write('{}\'.format(' default_fontsize = 20;'))            # activationをを指定            fout.write('{}\'.format(' activation = none;'))            # ファイルごとのシーケンスを表示            for i in self.seqdiag_list:                fout.write('{}\'.format(i))            # diagファイルに出力            fout.write('{}\'.format('}'))    # diagファイルからシーケンス図を作成    def create_image(self):        # diagファイルを指定        diag_file = \"out.diag\"        # シーケンス図を作成        subprocess.call([\"seqdiag\", diag_file])def main():    ws2seqdiag = ws2seqdiag(sys.argv[1:])    ws2seqdiag.set_direction()    ws2seqdiag.set_name()    ws2seqdiag.convert_name()    ws2seqdiag.create_diag()    ws2seqdiag.create_image()if __name__ == '__main__':    main()アウトプット左から\"client\", \"proxy\", \"web\"のシーケンス図となっているこれなら複数箇所のパケットのシーケンスがわかる※ 2016/9/12 シーケンス図の色指定をできるように対応しましたtcpフラグが\"syn\",\"ack\",\"fin\"は\"green\"\"urg\",\"psh\",\"rst\"は\"red\"上記以外は\"blue\"色設定は_init_関数のself.color_dict内で指定可能        # 色情報の辞書        self.color_dict = {\"default\":\"blue\", \"urg\":\"red\", \"ack\":\"green\",             \"psh\":\"red\", \"rst\":\"red\", \"syn\":\"green\", \"fin\":\"green\"}課題時間でソートしているため、時間がずれていると正しいシーケンス図とならない（当たり前だが）どこで遅延が起きているかわかりやすくしたい（時間を見やすくする）送信データと対応しているackをひも付けてわかりやすくしたい（パケットの対応を見やすくする）シーケンス矢印上のinfo情報をわかりやすくしたい（そうすれば矢印を縮められる）よりpythonicにコードを修正",
+    "body": "# 複数ノードのパケットキャプチャファイルからシーケンス図を出力するツールを作成した## 概要ネットワーク上の複数ノードで、wiresharkやtcpdumpで同時にパケットキャプチャしたファイルからパケットのシーケンス図をpng形式で出力するツールを作成した。言語はpython、seqdiagというシーケンス図を作成するライブラリを使わせていただいた。※ リファクタリングのご意見いただけると幸いです※ 2016/9/12 ソースのインデントが崩れていたため修正※ 2016/9/12 シーケンス図の色指定の対応済み### ツール作成の背景会社でお客さん環境のネットワーク遅延の調査のため、各通信ノードで採取したパケットの突き合わせを行った。パケットはpcap形式のためwiresharkで閲覧、はじめは複数wiresharkを開き目で突き合わせを行ったが無理。wiresharkの機能にフローダイアグラムという、特定コネクションを表示するツールがあるが、複数箇所で採取したパケットの突き合わせには使えないため断念。仕方がないのでexcel上にパケットのシーケンスを起こすことを決意。キャプチャファイルをクライアントからの特定ポート通信に絞り、パケットをエクスポートしたあとcsv形式に変換、excel上で手でシーケンス図を起こした。チームで議論するには役にたったが時間がかかり過ぎたし、２度と同じことを繰り返したくないのでツールを作成した。参考：その時の環境http client --- internet --- llb --- fw --- slb --- http server### 必要なもの* python 2.7  * seqdiag  * パケットキャプチャファイル（csv形式）    * 下記カラムの形式となっていること\"no.\",\"time\",\"source\",\"destination\",\"protocol\",\"length\",\"info\"   * timeカラムの時刻表示形式が wiresharkの時刻表示形式の\"日時\"形式になっていること日時形式(1973-06-14 01:02:03.123456）### 参考にしたサイト* [シーケンス図生成ツール seqdiag](http://blockdiag.com/ja/seqdiag/)## 流れ### 環境構築1. python2.7をインストール$ curl -l -o https://www.python.org/ftp/python/2.7.12/python-2.7.12.tgz$ tar zxvf python-2.7.12.tgz$ cd python-2.7.12$ ./configure$ make && make altinstall2. pipをインストール$ curl -kl https://raw.github.com/pypa/pip/master/contrib/get-pip.py | python3. yumが使えるように修正  yumコマンドのインタプリタを既存のpython(version 2.6)を実行するように修正$ vi /usr/bin/yum例）下記のとおり修正#!/usr/bin/python2.64. seqdiagをインストール$ pip install seqdiag5. 今回作成したスクリプトを実行環境上に配置  スクリプト名は ws2seqdiag.pyとした### シーケンス図の作成1. 通信経路箇所でパケットキャプチャ2. キャプチャファイルから特定ポートの通信のみエクスポート3. csvファイルとして保存4. 今回作成したツール実行環境上にcsvファイルを送信5. ツールを実行6. 標準入力から通信間の対向機器の名称を入力7. シーケンス図が作成## 使い方今回は下記の環境をもとに使い方を説明client(windows 7) --- proxy(squid) --- server(nifty.comなど)1. 通信経路箇所でパケットキャプチャ  client(windows 7)上ではwireshark、proxy(squid)上ではtcpdumpを使用した  例）クライアント上でのパケットキャプチャwiresharkを実行し、通信が終了したら保存するファイル名は任意、client.pcapとして保存例）プロキシサーバ上でのパケットキャプチャ$ tcpdump -i eth1 -w proxy.pcapファイル名は任意、proxy.pcapとして保存2. キャプチャファイルから特定ポートの通信のみエクスポート  先ほどキャプチャしたファイルをwireshark上で開き特定ポートに絞る  具体的には、3way handshakeのsynフラグを送っている際のポート番号を確認wireshark上でフィルタを行うtcp.port==ポート番号3. csvファイルとして保存  wiresharkでcsv形式で保存する例）クライアント上でのパケットキャプチャファイル名は任意、client.csvとして保存例）プロキシサーバ上でのパケットキャプチャファイル名は任意、proxy.csvとして保存4. 今回作成したツール実行環境上にcsvファイルを送信  5. ツールを実行今回は採取箇所が２箇所なので先ほどキャプチャしたファイルをクライアント側から近い順に引数として２ファイル渡して実行$ python ws2seqdiag.py client.csv proxy.csv 6. 標準入力から通信間の対向機器の名称を入力ファイルごとに source-ip と destination-ip の２回、名前を入れるよう標準入力で入力を求められる下記の例はクライアントープロキシ間なので、\"client\"と\"proxy\"とした\\########################################file_name:client.csv\\########################################src ip:192.168.1.3 -> src name: ???input src name > clientdst ip:192.168.1.62 -> dst name: ???input dst name > proxy続いてプロキシサーバ間も入力も求められるので、\"proxy\"と\"sever\"とした\\########################################file_name:proxy.csv\\########################################src ip:192.168.1.3 -> src name: ???input src name > proxydst ip:192.168.1.62 -> dst name: ???input dst name > server7. シーケンス図が作成out.png と out.diag というファイルが作成されるout.pngがpng形式のシーケンス図out.diagが画像生成の元となったseqdiag形式のファイル# file out.*out.diag: ascii text, with very long linesout.png:  png image data, 1856 x 31706, 8-bit/color rgba, non-interlaced## ツールについて### 処理の流れ1. 引数でcsvファイルを渡す2. ファイルごとにsynフラグから通信間を検出3. 2の対向ノードの名前を標準入力で渡す4. ipアドレスから3で指定した名前に置換5. seqdiag形式に出力6. seqdiagに渡して画像を出力### ソースコード```py# -*- coding: utf-8 -*-import osimport subprocessimport sysimport csvimport re\"\"\" wiresharkのcsvファイルからseqdiagで読める形式に変換\"\"\"__author__ = \"yusuke watanabe\"__version__ = \"1.01\"__date__ = \"12 sep 2016\"class ws2seqdiag():    def __init__(self, files):        # 入力ファイルのリスト        self.files = files        # ファイルごとのsrc-ipとdst-ipのリスト        self.syn_list = list()        # 名前変換後のパケットのリスト        self.packet_list = list()        # diag形式に変換したパケットのリスト        self.seqdiag_list = list()        # 色情報の辞書        self.color_dict = {\"default\":\"blue\", \"urg\":\"red\", \"ack\":\"green\",             \"psh\":\"red\", \"rst\":\"red\", \"syn\":\"green\", \"fin\":\"green\"}    # synの通信方向で通信間を検出    def set_direction(self):        syn_pattern = re.compile('syn')        # csvファイルごとの処理        for in_file in self.files:            with open(in_file, 'rt') as fin:                cin = csv.reader(fin)                # シーケンスごとの処理                for packet in cin:                    # シーケンスからsynフラグを検出                    m = syn_pattern.search(str(packet))                    if m:                        # src-ipとdst-ipを辞書に格納                        self.syn_list.append({                            \"file_name\": in_file,                            \"src_ip\": str(packet[2]),                            \"dst_ip\": str(packet[3]),                        })                        break    # 標準入力からsrcとdstの名前を入力    def set_name(self):        # ファイルごとの処理        for syn in self.syn_list:            # csvファイル名の表示            print('########################################')            print('file_name:{}'.format(syn[\"file_name\"]))            print('########################################')            # src-ipの名前入力            print('src ip:{} -> src name: ???'.format(syn[\"src_ip\"]))            sys.stdout.write('input src name > ')            syn[\"src\"] = raw_input()            # dst-ipの名前入力            print('dst ip:{} -> dst name: ???'.format(syn[\"dst_ip\"]))            sys.stdout.write('input dst name > ')            syn[\"dst\"] = raw_input()    # src-ip, dst-ipの名前を変換    def convert_name(self):        # csvファイルのラベルを除外する正規表現を定義        num_pattern = re.compile('no.')        # ファイルごとの処理        for in_file in self.syn_list:            with open(in_file[\"file_name\"], 'rt') as fin:                cin = csv.reader(fin)                # シーケンスごとの処理                for packet in cin:                    # src-ipを名前に置換                    conv_src_packet = str(packet).replace(                        in_file[\"src_ip\"], in_file[\"src\"])                    # dst-ipを名前に置換                    conv_packet = conv_src_packet.replace(                        in_file[\"dst_ip\"], in_file[\"dst\"])                    # 置換後のシーケンスを\",\"で区切って辞書へ追加                    packet = conv_packet.split(\",\")                    # packet info用の文字列作成                    packet_info = \"\"                    for info in range(6, len(packet)):                        packet_info += packet[info]                    # ラベル以外の文字列をseqdiag形式に変換してリストへ追加                    m = num_pattern.search(str(packet))                    if not m:                        self.packet_list.append('{},{},{},{}'                        .format(packet[1], packet[2], packet[3], packet_info))    # diagファイルを作成    def create_diag(self):        # diagファイルがある場合は削除        out_file = os.path.exists('out.diag')        if out_file:            os.remove('out.diag')        # シーケンスを時系列に並び替え        self.packet_list.sort()        for i in self.packet_list:            packet = i.split(\",\")            color = \"\"            for j in self.color_dict.keys():                if re.search(str(j),packet[3]):                    color = self.color_dict[j]                    break            else:                color = self.color_dict[\"default\"]            self.seqdiag_list.append('  {} -> {} [ diagonal, label = \" {}\{} \", color = {} ]; '            .format(packet[1], packet[2], packet[0], packet[3], color))                    # diagファイルを作成        with open('out.diag', 'a') as fout:            fout.write('{}\'.format('seqdiag {'))            # edgeの長さを指定            fout.write('{}\'.format(' edge_length = 600;'))            # spanの高さを指定            fout.write('{}\'.format(' span_height = 10;'))            # フォントサイズを指定            fout.write('{}\'.format(' default_fontsize = 20;'))            # activationをを指定            fout.write('{}\'.format(' activation = none;'))            # ファイルごとのシーケンスを表示            for i in self.seqdiag_list:                fout.write('{}\'.format(i))            # diagファイルに出力            fout.write('{}\'.format('}'))    # diagファイルからシーケンス図を作成    def create_image(self):        # diagファイルを指定        diag_file = \"out.diag\"        # シーケンス図を作成        subprocess.call([\"seqdiag\", diag_file])def main():    ws2seqdiag = ws2seqdiag(sys.argv[1:])    ws2seqdiag.set_direction()    ws2seqdiag.set_name()    ws2seqdiag.convert_name()    ws2seqdiag.create_diag()    ws2seqdiag.create_image()if __name__ == '__main__':    main()```### アウトプット左から\"client\", \"proxy\", \"web\"のシーケンス図となっている![ws2seqdiag1.png](https://qiita-image-store.s3.amazonaws.com/0/43280/5de33f17-4d6b-09e0-04b2-e9070c906b1a.png)これなら複数箇所のパケットのシーケンスがわかる![ws2seqdiag2.png](https://qiita-image-store.s3.amazonaws.com/0/43280/71176736-89a9-baeb-184e-a1b628363cc1.png)※ 2016/9/12 シーケンス図の色指定をできるように対応しましたtcpフラグが\"syn\",\"ack\",\"fin\"は\"green\"\"urg\",\"psh\",\"rst\"は\"red\"上記以外は\"blue\"色設定は\\__init__関数のself.color_dict内で指定可能        # 色情報の辞書        self.color_dict = {\"default\":\"blue\", \"urg\":\"red\", \"ack\":\"green\",             \"psh\":\"red\", \"rst\":\"red\", \"syn\":\"green\", \"fin\":\"green\"}### 課題* 時間でソートしているため、時間がずれていると正しいシーケンス図とならない（当たり前だが）* どこで遅延が起きているかわかりやすくしたい（時間を見やすくする）* 送信データと対応しているackをひも付けてわかりやすくしたい（パケットの対応を見やすくする）* シーケンス矢印上のinfo情報をわかりやすくしたい（そうすれば矢印を縮められる）* よりpythonicにコードを修正",
+    "coediting": false,
+    "created_at": "2016-09-11t22:33:51+09:00",
+    "group": null,
+    "id": "d3e2c73717598e271333",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "wireshark",
+        "versions": []
+      },
+      {
+        "name": "tcpdump",
+        "versions": []
+      }
+    ],
+    "title": "複数ノードのパケットキャプチャファイルからシーケンス図を出力するツールを作成した",
+    "updated_at": "2016-09-12t23:10:23+09:00",
+    "url": "http://qiita.com/yusukew62/items/d3e2c73717598e271333",
+    "user": {
+      "description": "",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 0,
+      "github_login_name": "yusukew62",
+      "id": "yusukew62",
+      "items_count": 6,
+      "linkedin_id": "",
+      "location": "",
+      "name": "yusuke watanabe",
+      "organization": "",
+      "permanent_id": 43280,
+      "profile_image_url": "https://qiita-image-store.s3.amazonaws.com/0/43280/profile-images/1473689469",
+      "twitter_screen_name": "yusukew62",
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "以下の記事に書いた通り。http://tam5917.hatenablog.com/entry/2016/09/09/205514lstmの構造を簡略化したネットワークアーキテクチャが最近提案されているので、さくっとtfで実装したということ。内容はリンク先の論文を読めば誰でも分かる。",
+    "body": "以下の記事に書いた通り。http://tam5917.hatenablog.com/entry/2016/09/09/205514lstmの構造を簡略化したネットワークアーキテクチャが最近提案されているので、さくっとtfで実装したということ。内容はリンク先の論文を読めば誰でも分かる。",
+    "coediting": false,
+    "created_at": "2016-09-10t23:00:12+09:00",
+    "group": null,
+    "id": "6198f3d5a4d6350eb9af",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "deeplearning",
+        "versions": []
+      },
+      {
+        "name": "深層学習",
+        "versions": []
+      },
+      {
+        "name": "tensorflow",
+        "versions": []
+      }
+    ],
+    "title": "mguとかsguといったlstmの派生版をtensorflowで実装",
+    "updated_at": "2016-09-11t21:29:19+09:00",
+    "url": "http://qiita.com/ballforest/items/6198f3d5a4d6350eb9af",
+    "user": {
+      "description": "",
+      "facebook_id": "",
+      "followees_count": 27,
+      "followers_count": 15,
+      "github_login_name": "tam17aki",
+      "id": "ballforest",
+      "items_count": 16,
+      "linkedin_id": "",
+      "location": "",
+      "name": "",
+      "organization": "",
+      "permanent_id": 25380,
+      "profile_image_url": "https://qiita-image-store.s3.amazonaws.com/0/25380/profile-images/1473684319",
+      "twitter_screen_name": "ballforest",
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "言語処理100本ノック 2015の挑戦記録です。環境はubuntu 16.04 lts ＋ python 3.5.2 :: anaconda 4.1.1 (64-bit)です。過去のノックの一覧はこちらからどうぞ。第1章: 準備運動03.円周率\"now i need a drink, alcoholic of course, after the heavy lectures involving quantum mechanics.\"という文を単語に分解し，各単語の（アルファベットの）文字数を先頭から出現順に並べたリストを作成せよ．出来上がったコード：main.py# coding: utf-8target = 'now i need a drink, alcoholic of course, after the heavy lectures involving quantum mechanics.'result = []words = target.split(' ')for word in words:    result.append(len(word) - word.count(',') - word.count('.'))print(result)実行結果：端末[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9],と.の扱いがあんまり良くない感じがしています。str.split()がデリミタ文字列を複数指定できるときれいでいいのですが。(2016/09/11追記)shiracamusさんよりアドバイス頂きました。ありがとうございます！問題が「アルファベットの文字」なので、アルファベットのみカウントするようにしてみました。main2.py# coding: utf-8target = 'now i need a drink, alcoholic of course, after the heavy lectures involving quantum mechanics.'result = []words = target.split(' ')for word in words:    count = 0    for char in word:        if char.isalpha():            count += 1    result.append(count)print(result)先輩方のコードを拝見すると、内包表記を使うことでもっと効率的に書けそうです。ただ、不慣れでパッと見では理解しにくいので、慣れるまでは冗長なままでいこうかと思います^^;　4本目のノックは以上です。誤りなどありましたら、ご指摘いただけますと幸いです。",
+    "body": "[言語処理100本ノック 2015](http://www.cl.ecei.tohoku.ac.jp/nlp100/)の挑戦記録です。環境はubuntu 16.04 lts ＋ python 3.5.2 \\:\\: anaconda 4.1.1 (64-bit)です。過去のノックの一覧は[こちら](http://qiita.com/segavvy/items)からどうぞ。## 第1章: 準備運動###03.円周率>\"now i need a drink, alcoholic of course, after the heavy lectures involving quantum mechanics.\"という文を単語に分解し，各単語の（アルファベットの）文字数を先頭から出現順に並べたリストを作成せよ．出来上がったコード：```python:main.py# coding: utf-8target = 'now i need a drink, alcoholic of course, after the heavy lectures involving quantum mechanics.'result = []words = target.split(' ')for word in words:\tresult.append(len(word) - word.count(',') - word.count('.'))print(result)```実行結果：```text:端末[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9]````,`と`.`の扱いがあんまり良くない感じがしています。[`str.split()`](http://docs.python.jp/3/library/stdtypes.html?highlight=str.split#str.split)がデリミタ文字列を複数指定できるときれいでいいのですが。****(2016/09/11追記)*shiracamusさんよりアドバイス頂きました。ありがとうございます！問題が「アルファベットの文字」なので、アルファベットのみカウントするようにしてみました。```python:main2.py# coding: utf-8target = 'now i need a drink, alcoholic of course, after the heavy lectures involving quantum mechanics.'result = []words = target.split(' ')for word in words:\tcount = 0\tfor char in word:\t\tif char.isalpha():\t\t\tcount += 1\tresult.append(count)print(result)```先輩方のコードを拝見すると、内包表記を使うことでもっと効率的に書けそうです。ただ、不慣れでパッと見では理解しにくいので、慣れるまでは冗長なままでいこうかと思います^^;　4本目のノックは以上です。誤りなどありましたら、ご指摘いただけますと幸いです。",
+    "coediting": false,
+    "created_at": "2016-09-11t20:36:23+09:00",
+    "group": null,
+    "id": "a0ddefb64cc878b9639b",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "言語処理100本ノック",
+        "versions": []
+      }
+    ],
+    "title": "素人の言語処理100本ノック:03",
+    "updated_at": "2016-09-11t23:47:48+09:00",
+    "url": "http://qiita.com/segavvy/items/a0ddefb64cc878b9639b",
+    "user": {
+      "description": "c/c++でmacとwin用の開発していた元プログラマ。c#/vb.net/vb6/vbaも少々。最近pythonをかじり始めました。\r\r写真は丸まってたペンギンです。\r\rあとドラクエ10の経路探索サービス「アストルティア乗換案内」http://astoltiaroutefinder.azurewebsites.net 運営しています。目的地の経路、モンスターや魚の生息場所探しにぜひ！",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 1,
+      "github_login_name": null,
+      "id": "segavvy",
+      "items_count": 5,
+      "linkedin_id": "",
+      "location": "",
+      "name": "segavvy",
+      "organization": "",
+      "permanent_id": 139624,
+      "profile_image_url": "https://s3-ap-northeast-1.amazonaws.com/qiita-image-store/0/139624/5ebd708a6115a0d5675d0868218256ff5d9b48f3/medium.png?1473343070",
+      "twitter_screen_name": "segavvy",
+      "website_url": "http://d.hatena.ne.jp/segavvy/"
+    }
+  },
+  {
+    "rendered_body": "ターミナルでカレンダーを表示するcalコマンドはlinuxに標準で付いていますが、色がついていないという不満がありました。そこで、車輪の再発明感はあるものの、色付きのカレンダーを表示するコマンドを作成しました。下記でインストールできます。環境によってはsudoが必要かもしれません。pip3 install console_calendarpython3のみ対応です。表示するにはconcalコマンドを叩いて下さい。感想今回利用した、pythonのcalendarという標準ライブラリがすごいです。年・月を指定して、週ごとの配列を返す関数があり、それを使えばロジックを考えなくてもカレンダーが作れます。表示に関しては、ターミナル用のカレンダーを出力するだけでなく、htmlで1年分のカレンダーも作れます。http://docs.python.jp/2/library/calendar.html参考pypiへのアップロードはこちらを参考にさせて頂きました。ありがとうございます。http://qiita.com/edvakf@github/items/d82cd7ab77ea2b88506c",
+    "body": "ターミナルでカレンダーを表示する`cal`コマンドはlinuxに標準で付いていますが、色がついていないという不満がありました。そこで、車輪の再発明感はあるものの、色付きのカレンダーを表示するコマンドを作成しました。下記でインストールできます。環境によっては`sudo`が必要かもしれません。`pip3 install console_calendar`python3のみ対応です。表示するには`concal`コマンドを叩いて下さい。![screenshot_2016-09-11_18-40-19.png](https://qiita-image-store.s3.amazonaws.com/0/103885/c5184b02-aeeb-43e9-c82b-8db94cc1c467.png)# 感想今回利用した、pythonの`calendar`という標準ライブラリがすごいです。年・月を指定して、週ごとの配列を返す関数があり、それを使えばロジックを考えなくてもカレンダーが作れます。表示に関しては、ターミナル用のカレンダーを出力するだけでなく、htmlで1年分のカレンダーも作れます。http://docs.python.jp/2/library/calendar.html# 参考pypiへのアップロードはこちらを参考にさせて頂きました。ありがとうございます。http://qiita.com/edvakf@github/items/d82cd7ab77ea2b88506c",
+    "coediting": false,
+    "created_at": "2016-09-11t18:37:25+09:00",
+    "group": null,
+    "id": "e071978bf684fd74af07",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "linux",
+        "versions": []
+      }
+    ],
+    "title": "ターミナルでカラフルなカレンダーを表示するコマンドを作った",
+    "updated_at": "2016-09-11t18:40:44+09:00",
+    "url": "http://qiita.com/acro5piano/items/e071978bf684fd74af07",
+    "user": {
+      "description": "chromebook+ubuntu使い\r",
+      "facebook_id": "",
+      "followees_count": 1,
+      "followers_count": 5,
+      "github_login_name": "acro5piano",
+      "id": "acro5piano",
+      "items_count": 18,
+      "linkedin_id": "",
+      "location": "東京都港区赤坂",
+      "name": "kazuya gosho",
+      "organization": "株式会社クイック",
+      "permanent_id": 103885,
+      "profile_image_url": "https://s3-ap-northeast-1.amazonaws.com/qiita-image-store/0/103885/2da24ebdeacfb53fd71bfb9ea87bf213fcac011d/medium.png?1464314816",
+      "twitter_screen_name": "ydp140",
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "python (cpython) のthreading.threadは、gil(global interpreter lock)の影響で同時に2つ以上のスレッドが並列で動作しないらしい(並行では動作するけど)。では、他の実装ならどうなのかと思い、jythonで確認してみました。あと、jythonはjavaのapiも使用できるので、java.lang.threadもついでに確認してみた。検証環境cpu: intel(r) celeron(r) cpu  n2830  @ 2.16ghz × 2ubuntu 16.04pythonpython 2.7.12jythonjython 2.7.0openjdk 1.8.0_91 64bit servervm検証用ソースコード4〜100,000の範囲の素数を列挙するタスクを分散して計算するワーカーを作成。以下がthreading.threadを使った場合。py_worker.pyfrom threading import threadclass worker(thread):    def __init__(self, start, end):        super(worker, self).__init__()        self._start = start        self._end = end    def run(self):        self.prime_nums = []        for i in xrange(self._start, self._end):            if not 0 in self._remainders(i):                self.prime_nums.append(i)    def _remainders(self, end, start=2):        for i in xrange(start, end):            yield end % i以下がjava.lang.threadを使った場合。(importするクラスが異なるだけ)jy_worker.pyfrom java.lang import threadclass worker(thread):    def __init__(self, start, end):        super(worker, self).__init__()        self._start = start        self._end = end    def run(self):        self.prime_nums = []        for i in xrange(self._start, self._end):            if not 0 in self._remainders(i):                self.prime_nums.append(i)    def _remainders(self, end, start=2):        for i in xrange(start, end):            yield end % iそして、ワーカースレッドをキックして経過時間を測る処理が以下です。main.pyimport sysfrom threading import threadfrom datetime import datetimedef total_seconds(td):    return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6if __name__ == '__main__':    argv = sys.argv    argc = len(argv)    if argc &lt; 4:        print 'error: &lt;worker_module&gt; &lt;n_workers&gt; &lt;max_value&gt;'        sys.exit(1)    worker_module = argv[1]    n_workers = int(argv[2])    max_value = int(argv[3])    min_value = 4    interval = (max_value - min_value) / n_workers    worker = __import__(worker_module).worker    workers = []    for start in xrange(4, max_value, interval):        print 'worker: %s, %s' % (start, start+interval)        worker = worker(start, start+interval)        workers.append(worker)    start_time = datetime.utcnow()    for worker in workers:        worker.start()    for worker in workers:        worker.join()    end_time = datetime.utcnow()    elapsed_time = end_time - start_time    elapsed_sec = total_seconds(elapsed_time)    n_primes = sum([len(w.prime_nums) for w in workers])    print '# of primes = %s, time = %s sec' % (n_primes, elapsed_sec)結果ワーカー処理が終わるまでの経過時間は以下の通りとなりました。実装クラス1 thread2 threadspythonthreading.thread100 sec125 secjythonthreading.thread101 sec73 secjythonjava.lang.thread101 sec77 secpythonは、同時に1つのスレッドしか動作できないので、2スレッドで分散しても速くならない (むしろ遅くなってる) ですが、jythonでは違う結果になりました。1スレッドでの経過時間はpythonとjythonでほとんど同じなので、今回用いた処理に対する基本的な性能は変わらないと見ています。(本当はjavaの動的コンパイルが効いてjythonの方が速くならないかなーと期待したのですが)そして、jythonの場合、1スレッドより2スレッドの方が早く終わったので、ちゃんと並列で動作してくれている感じです。ここらへんの動作は実装依存なのかな。",
+    "body": "python (cpython) のthreading.threadは、gil(global interpreter lock)の影響で同時に2つ以上のスレッドが並列で動作しないらしい(並行では動作するけど)。では、他の実装ならどうなのかと思い、jythonで確認してみました。あと、jythonはjavaのapiも使用できるので、java.lang.threadもついでに確認してみた。#検証環境- cpu: intel(r) celeron(r) cpu  n2830  @ 2.16ghz × 2- ubuntu 16.04- python    - python 2.7.12- jython    - jython 2.7.0    - openjdk 1.8.0_91 64bit servervm#検証用ソースコード4〜100,000の範囲の素数を列挙するタスクを分散して計算するワーカーを作成。以下がthreading.threadを使った場合。```python:py_worker.pyfrom threading import threadclass worker(thread):    def __init__(self, start, end):        super(worker, self).__init__()        self._start = start        self._end = end    def run(self):        self.prime_nums = []        for i in xrange(self._start, self._end):            if not 0 in self._remainders(i):                self.prime_nums.append(i)    def _remainders(self, end, start=2):        for i in xrange(start, end):            yield end % i```以下がjava.lang.threadを使った場合。(importするクラスが異なるだけ)```python:jy_worker.pyfrom java.lang import threadclass worker(thread):    def __init__(self, start, end):        super(worker, self).__init__()        self._start = start        self._end = end    def run(self):        self.prime_nums = []        for i in xrange(self._start, self._end):            if not 0 in self._remainders(i):                self.prime_nums.append(i)    def _remainders(self, end, start=2):        for i in xrange(start, end):            yield end % i```そして、ワーカースレッドをキックして経過時間を測る処理が以下です。```python:main.pyimport sysfrom threading import threadfrom datetime import datetimedef total_seconds(td):    return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6if __name__ == '__main__':    argv = sys.argv    argc = len(argv)    if argc   '        sys.exit(1)    worker_module = argv[1]    n_workers = int(argv[2])    max_value = int(argv[3])    min_value = 4    interval = (max_value - min_value) / n_workers    worker = __import__(worker_module).worker    workers = []    for start in xrange(4, max_value, interval):        print 'worker: %s, %s' % (start, start+interval)        worker = worker(start, start+interval)        workers.append(worker)    start_time = datetime.utcnow()    for worker in workers:        worker.start()    for worker in workers:        worker.join()    end_time = datetime.utcnow()    elapsed_time = end_time - start_time    elapsed_sec = total_seconds(elapsed_time)    n_primes = sum([len(w.prime_nums) for w in workers])    print '# of primes = %s, time = %s sec' % (n_primes, elapsed_sec)```#結果ワーカー処理が終わるまでの経過時間は以下の通りとなりました。| 実装  | クラス            | 1 thread    | 2 threads    ||:------|:-----------------|------------:|-------------:||python | threading.thread | 100 sec     | 125 sec      ||jython | threading.thread | 101 sec     | 73 sec       ||jython | java.lang.thread | 101 sec     | 77 sec       |pythonは、同時に1つのスレッドしか動作できないので、2スレッドで分散しても速くならない (むしろ遅くなってる) ですが、jythonでは違う結果になりました。1スレッドでの経過時間はpythonとjythonでほとんど同じなので、今回用いた処理に対する基本的な性能は変わらないと見ています。(本当はjavaの動的コンパイルが効いてjythonの方が速くならないかなーと期待したのですが)そして、jythonの場合、1スレッドより2スレッドの方が早く終わったので、ちゃんと並列で動作してくれている感じです。ここらへんの動作は実装依存なのかな。",
+    "coediting": false,
+    "created_at": "2016-09-11t18:08:40+09:00",
+    "group": null,
+    "id": "ce4df4f2ee1bbd1458bc",
+    "private": false,
+    "tags": [
+      {
+        "name": "java",
+        "versions": []
+      },
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "jython",
+        "versions": []
+      }
+    ],
+    "title": "pythonとjythonにおけるマルチスレッド処理の違い",
+    "updated_at": "2016-09-11t19:47:09+09:00",
+    "url": "http://qiita.com/hashiwa/items/ce4df4f2ee1bbd1458bc",
+    "user": {
+      "description": "java好き。\r以前、fc2 ( http://hashiwasblog.blog38.fc2.com/ ) で少しブログやってました。",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 0,
+      "github_login_name": "hashiwa000",
+      "id": "hashiwa",
+      "items_count": 7,
+      "linkedin_id": "",
+      "location": "",
+      "name": "",
+      "organization": "",
+      "permanent_id": 107431,
+      "profile_image_url": "https://avatars.githubusercontent.com/u/947799?v=3",
+      "twitter_screen_name": null,
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "概要なかなか手が出なかったrecurrent neural network(rnn)のお勉強を始めていきたいと思います。基本はlstmを使った再帰的な処理を用いて予測を行なっていくような形ですが、なにぶんまだ写経に近いところもあり、完全に理解できているわけではないので間違い等があればご指摘いただきたく。参考にした先rnn + lstmのchainerでの実装例はchainerのサンプルを参考にしました。ただ、このままだと今まで自分で作ってきたフレームワークにはまらないので、少々加工を行いました。上記のコードの解説はここが詳しいかったです。あとは最近でた本でざっくりとrnnとlstmについて理解しています。問題設定サンプルそのままを動かしてもなんだか面白くないので、問題設定をしてみます。実務でも従前から言われるのですが、excelのrand()関数で作る乱数の周期は$2^{24}$であり、他の乱数に比べて周期が短いことが知られています。そのため、モンテカルロなんかでexcelの乱数を使うと結果に偏りが出たりします。(まぁ少ないサンプル数の場合はいいのかもしれません)一方、rの乱数はメルセンヌ・ツイスタというアルゴリズムで作られる非常に長い周期($2^{19937}$)を持つ乱数になっています。つまり、周期性が存在するのであればrnnを使った逐次学習を行うことで、次に出る乱数値が予測できるのではないか？というのが問題意識です。乱数の専門家ではないので、評価方法が正しいかどうかは不明。データの用意まずexcelの乱数は、rand関数を使って、=rounddown(rand()*10,0)としたものを1001個用意します。すると、0-9までの10個の整数値が得られます。次にrの乱数は一様乱数を以下のように生成します。x &lt;- floor(runif(1001)*10);(1001になっているのは、答えデータを次の値にするために1個余分に作っています。)説明変数は現時点の乱数値(0-9)とし、教師データを次の乱数値(0-9)とします。rnnの実装rnnはchainerを用いて以下のように実装しました。逐次処理なので、意図的にバッチサイズを1として最初から順番に一個づつ処理していくようにしています。まずベースクラスが以下のようになっています。dl_chainer.py# -*- coding: utf-8 -*-from chainer import functionset, variable, optimizers,serializersfrom chainer import functions as ffrom chainer import links as lfrom sklearn import basefrom sklearn.cross_validation import train_test_splitfrom abc import abcmeta, abstractmethodimport numpy as npimport siximport mathimport cpickle as pickleclass basechainerestimator(base.baseestimator):    __metaclass__= abcmeta  # python 2.x    def __init__(self, optimizer=optimizers.momentumsgd(lr=0.01), n_iter=10000, eps=1e-5, report=100,                 **params):        self.report = report        self.n_iter = n_iter        self.batch_size = params[\"batch_size\"] if params.has_key(\"batch_size\") else 100        self.network = self._setup_network(**params)        self.decay = 1.        self.optimizer = optimizer        self.optimizer.setup(self.network.collect_parameters())        self.eps = eps        np.random.seed(123)    @abstractmethod    def _setup_network(self, **params):        return functionset(l1=f.linear(1, 1))    @abstractmethod    def forward(self, x,train=true,state=none):        y = self.network.l1(x)        return y    @abstractmethod    def loss_func(self, y, t):        return f.mean_squared_error(y, t)    @abstractmethod    def output_func(self, h):        return f.identity(h)    @abstractmethod    def fit(self, x_data, y_data):        batchsize = self.batch_size        n = len(y_data)        for loop in range(self.n_iter):            perm = np.random.permutation(n)            sum_accuracy = 0            sum_loss = 0            for i in six.moves.range(0, n, batchsize):                x_batch = x_data[perm[i:i + batchsize]]                y_batch = y_data[perm[i:i + batchsize]]                x = variable(x_batch)                y = variable(y_batch)                self.optimizer.zero_grads()                yp = self.forward(x)                loss = self.loss_func(yp,y)                loss.backward()                self.optimizer.update()                sum_loss += loss.data * len(y_batch)                sum_accuracy += f.accuracy(yp,y).data * len(y_batch)            if self.report &gt; 0 and (loop + 1) % self.report == 0:                print('loop={:d}, train mean loss={:.6f} , train mean accuracy={:.6f}'.format(loop + 1, sum_loss / n,sum_accuracy / n))            self.optimizer.lr *= self.decay        return self    def predict(self, x_data):        x = variable(x_data,volatile=true)        y = self.forward(x,train=false)        return self.output_func(y).data    def predict_proba(self, x_data):        x = variable(x_data,volatile=true)        y = self.forward(x,train=false)        return self.output_func(y).data    def save_model(self,name):        with open(name,\"wb\") as o:            pickle.dump(self,o)class chainerclassifier(basechainerestimator, base.classifiermixin):    def predict(self, x_data):        return basechainerestimator.predict(self, x_data).argmax(1)     def predict_proba(self,x_data):        return basechainerestimator.predict_proba(self, x_data)次のrnnの実装は以下のようになっています。dl_chainer.pyclass rnnts(chainerclassifier):    \"\"\"    recurrent neurarl network with lstm by 1 step    \"\"\"    def _setup_network(self, **params):        self.input_dim = params[\"input_dim\"]        self.hidden_dim = params[\"hidden_dim\"]        self.n_classes = params[\"n_classes\"]        self.optsize = params[\"optsize\"] if params.has_key(\"optsize\") else 30        self.batch_size = 1         self.dropout_ratio = params[\"dropout_ratio\"] if params.has_key(\"dropout_ratio\") else 0.5        network = functionset(            l0 = l.linear(self.input_dim, self.hidden_dim),            l1_x = l.linear(self.hidden_dim, 4*self.hidden_dim),            l1_h = l.linear(self.hidden_dim, 4*self.hidden_dim),            l2_h = l.linear(self.hidden_dim, 4*self.hidden_dim),            l2_x = l.linear(self.hidden_dim, 4*self.hidden_dim),            l3   = l.linear(self.hidden_dim, self.n_classes),        )        return network    def forward(self, x, train=true,state=none):        if state is none:            state = self.make_initial_state(train)        h0 = self.network.l0(x)        h1_in = self.network.l1_x(f.dropout(h0, ratio=self.dropout_ratio, train=train)) + self.network.l1_h(state['h1'])        c1, h1 = f.lstm(state['c1'], h1_in)        h2_in = self.network.l2_x(f.dropout(h1, ratio=self.dropout_ratio, train=train)) + self.network.l2_h(state['h2'])        c2, h2 = f.lstm(state['c2'], h2_in)        y = self.network.l3(f.dropout(h2, ratio=self.dropout_ratio, train=train))        state = {'c1': c1, 'h1': h1, 'c2': c2, 'h2': h2}        return y,state    def make_initial_state(self,train=true):        return {name: variable(np.zeros((self.batch_size, self.hidden_dim), dtype=np.float32),                volatile=not train)                for name in ('c1', 'h1', 'c2', 'h2')}    def fit(self, x_data, y_data):        batchsize = self.batch_size        n = len(y_data)        for loop in range(self.n_iter):            sum_accuracy = variable(np.zeros((), dtype=np.float32))            sum_loss = variable(np.zeros((), dtype=np.float32))            state = self.make_initial_state(train=true) #initial stateの生成            for i in six.moves.range(0, n, batchsize):                x_batch = x_data[i:i + batchsize]                y_batch = y_data[i:i + batchsize]                x = variable(x_batch,volatile=false)                y = variable(y_batch,volatile=false)                yp,state = self.forward(x,train=true,state=state)                loss = self.loss_func(yp,y)                accuracy = f.accuracy(yp,y)                sum_loss += loss                sum_accuracy += accuracy                if (i + 1) % self.optsize == 0:                    self.optimizer.zero_grads()                    sum_loss.backward()                    sum_loss.unchain_backward()                    self.optimizer.clip_grads(5)                    self.optimizer.update()            if self.report &gt; 0 and (loop + 1) % self.report == 0:                print('loop={:d}, train mean loss={:.6f} , train mean accuracy={:.6f}'.format(loop + 1, sum_loss.data / n,sum_accuracy.data / n))            self.optimizer.lr *= self.decay        return self    def output_func(self, h):        return f.softmax(h)    def loss_func(self, y, t):        return f.softmax_cross_entropy(y, t)    def predict_proba(self, x_data):        n = len(x_data)        state = self.make_initial_state(train=false)        y_list = []        for i in six.moves.range(0, n, self.batch_size):            x = variable(x_data[i:i+self.batch_size],volatile=true)            y,state = self.forward(x,train=false,state=state)            y_list.append(y.data[0]) #batch size = 1のみに対応        y = variable(np.array(y_list),volatile=false)        return self.output_func(y).data    def predict(self, x_data):        return self.predict_proba(x_data).argmax(1)ほぼほぼ参照したコードを採用しています。ここまで書いてしまうとメイン処理は単純に書けて、main.py# -*- coding: utf-8 -*-import pandas as pdimport numpy as npfrom dl_chainer import *import warningsfrom sklearn.metrics import classification_reportwarnings.filterwarnings(\"ignore\")i_file_excel=\"excelrand.csv\"i_file_r=\"rrandom.csv\"def main(file=\"\"):    \"\"\"    excelの乱数をrnnで学習して予測する    :return:    \"\"\"    df0 = pd.read_csv(file)    n = len(df0)    x_all = df0.iloc[:,0]    y_all = []    y_all.extend(x_all)    y_all.extend([np.nan])    y_all = y_all[1:(n+1)]    x_all_array = np.reshape(np.array(x_all[0:(n-1)],dtype=np.float32),(len(x_all)-1,1))/10    y_all_array = np.reshape(np.array(y_all[0:(n-1)],dtype=np.int32),(len(x_all)-1))    train_n = 2 * n/3    x_train = x_all_array[0:train_n]    y_train = y_all_array[0:train_n]    x_test = x_all_array[train_n:]    y_test = y_all_array[train_n:]    params = {\"input_dim\":1,\"hidden_dim\":100,\"n_classes\":10,\"dropout_ratio\":0.5,\"optsize\":30}    print params    print len(x_train),len(x_test)    rnn = rnnts(n_iter=200,report=1,**params)    rnn.fit(x_train,y_train)    pred = rnn.predict(x_train)    print classification_report(y_train,pred)    pred = rnn.predict(x_test)    print classification_report(y_test,pred)if __name__ == '__main__':    main(i_file_r)    main(i_file_excel)基本は10クラス分類問題になります。結果の評価結果の評価は難しいところです。少ないサンプル数のテストデータでは正しい評価ができないと考えられます。どちらの乱数列を使っても基本的にはrnnの学習は進みます。そこで、同一エポック数でどのようの学習速度が違うか、をみることにしました。つまり、同一エポックにおいて、より精度が出ている方は、データ内になんらかのパターンがあり、それを学習「されて」しまっている、と解釈します。乱数としてはパターンの存在はない方がいいので、この学習速度が遅い方が当然いい、というわけです。結果が以下、excel側の方がrよりも学習速度が速いことがわかります。つまり、乱数の質的にはrの方が良いと見れるかな。本当は学習が進まない方がいいのだけど。まとめ今回はrnnの練習のために、実装を試しに行ってみてexcelとrの乱数の学習を行いました。結果の評価方法が正しいかどうかは別にして、この評価方法だとexcel側の学習が速く進み、乱数としてはrの方が質がいいということがわかりました。たぶん、もっとちゃんと検証するには無数の乱数列が必要なのですが、計算機パワーの関係でこのくらいにしておきました。にしても、rnnで計算速度を上げるにはどうしたらいいのだろう・・・",
+    "body": "#概要なかなか手が出なかったrecurrent neural network(rnn)のお勉強を始めていきたいと思います。基本はlstmを使った再帰的な処理を用いて予測を行なっていくような形ですが、なにぶんまだ写経に近いところもあり、完全に理解できているわけではないので間違い等があればご指摘いただきたく。#参考にした先rnn + lstmのchainerでの実装例はchainerの[サンプル](https://github.com/yusuketomoto/chainer-char-rnn)を参考にしました。ただ、このままだと今まで自分で作ってきたフレームワークにはまらないので、少々加工を行いました。上記のコードの解説は[ここ](http://blog.livedoor.jp/tak_tak0/archives/52290995.html)が詳しいかったです。あとは最近でた[本](http://www.amazon.co.jp/dp/4274219348)でざっくりとrnnとlstmについて理解しています。#問題設定サンプルそのままを動かしてもなんだか面白くないので、問題設定をしてみます。実務でも従前から言われるのですが、excelのrand()関数で作る乱数の周期は$2^{24}$であり、他の乱数に比べて周期が短いことが知られています。そのため、モンテカルロなんかでexcelの乱数を使うと結果に偏りが出たりします。(まぁ少ないサンプル数の場合はいいのかもしれません)一方、rの乱数は[メルセンヌ・ツイスタ](https://ja.wikipedia.org/wiki/メルセンヌ・ツイスタ)というアルゴリズムで作られる非常に長い周期($2^{19937}$)を持つ乱数になっています。つまり、周期性が存在するのであればrnnを使った逐次学習を行うことで、次に出る乱数値が予測できるのではないか？というのが問題意識です。乱数の専門家ではないので、評価方法が正しいかどうかは不明。#データの用意まずexcelの乱数は、rand関数を使って、```excel=rounddown(rand()*10,0)```としたものを1001個用意します。すると、0-9までの10個の整数値が得られます。次にrの乱数は一様乱数を以下のように生成します。```rx  0 and (loop + 1) % self.report == 0:                print('loop={:d}, train mean loss={:.6f} , train mean accuracy={:.6f}'.format(loop + 1, sum_loss / n,sum_accuracy / n))            self.optimizer.lr *= self.decay        return self    def predict(self, x_data):        x = variable(x_data,volatile=true)        y = self.forward(x,train=false)        return self.output_func(y).data    def predict_proba(self, x_data):        x = variable(x_data,volatile=true)        y = self.forward(x,train=false)        return self.output_func(y).data    def save_model(self,name):        with open(name,\"wb\") as o:            pickle.dump(self,o)class chainerclassifier(basechainerestimator, base.classifiermixin):    def predict(self, x_data):        return basechainerestimator.predict(self, x_data).argmax(1)     def predict_proba(self,x_data):        return basechainerestimator.predict_proba(self, x_data)```次のrnnの実装は以下のようになっています。```python:dl_chainer.pyclass rnnts(chainerclassifier):    \"\"\"    recurrent neurarl network with lstm by 1 step    \"\"\"    def _setup_network(self, **params):        self.input_dim = params[\"input_dim\"]        self.hidden_dim = params[\"hidden_dim\"]        self.n_classes = params[\"n_classes\"]        self.optsize = params[\"optsize\"] if params.has_key(\"optsize\") else 30        self.batch_size = 1         self.dropout_ratio = params[\"dropout_ratio\"] if params.has_key(\"dropout_ratio\") else 0.5        network = functionset(            l0 = l.linear(self.input_dim, self.hidden_dim),            l1_x = l.linear(self.hidden_dim, 4*self.hidden_dim),            l1_h = l.linear(self.hidden_dim, 4*self.hidden_dim),            l2_h = l.linear(self.hidden_dim, 4*self.hidden_dim),            l2_x = l.linear(self.hidden_dim, 4*self.hidden_dim),            l3   = l.linear(self.hidden_dim, self.n_classes),        )        return network    def forward(self, x, train=true,state=none):        if state is none:            state = self.make_initial_state(train)        h0 = self.network.l0(x)        h1_in = self.network.l1_x(f.dropout(h0, ratio=self.dropout_ratio, train=train)) + self.network.l1_h(state['h1'])        c1, h1 = f.lstm(state['c1'], h1_in)        h2_in = self.network.l2_x(f.dropout(h1, ratio=self.dropout_ratio, train=train)) + self.network.l2_h(state['h2'])        c2, h2 = f.lstm(state['c2'], h2_in)        y = self.network.l3(f.dropout(h2, ratio=self.dropout_ratio, train=train))        state = {'c1': c1, 'h1': h1, 'c2': c2, 'h2': h2}        return y,state    def make_initial_state(self,train=true):        return {name: variable(np.zeros((self.batch_size, self.hidden_dim), dtype=np.float32),                volatile=not train)                for name in ('c1', 'h1', 'c2', 'h2')}    def fit(self, x_data, y_data):        batchsize = self.batch_size        n = len(y_data)        for loop in range(self.n_iter):            sum_accuracy = variable(np.zeros((), dtype=np.float32))            sum_loss = variable(np.zeros((), dtype=np.float32))            state = self.make_initial_state(train=true) #initial stateの生成            for i in six.moves.range(0, n, batchsize):                x_batch = x_data[i:i + batchsize]                y_batch = y_data[i:i + batchsize]                x = variable(x_batch,volatile=false)                y = variable(y_batch,volatile=false)                yp,state = self.forward(x,train=true,state=state)                loss = self.loss_func(yp,y)                accuracy = f.accuracy(yp,y)                sum_loss += loss                sum_accuracy += accuracy                if (i + 1) % self.optsize == 0:                    self.optimizer.zero_grads()                    sum_loss.backward()                    sum_loss.unchain_backward()                    self.optimizer.clip_grads(5)                    self.optimizer.update()            if self.report > 0 and (loop + 1) % self.report == 0:                print('loop={:d}, train mean loss={:.6f} , train mean accuracy={:.6f}'.format(loop + 1, sum_loss.data / n,sum_accuracy.data / n))            self.optimizer.lr *= self.decay        return self    def output_func(self, h):        return f.softmax(h)    def loss_func(self, y, t):        return f.softmax_cross_entropy(y, t)    def predict_proba(self, x_data):        n = len(x_data)        state = self.make_initial_state(train=false)        y_list = []        for i in six.moves.range(0, n, self.batch_size):            x = variable(x_data[i:i+self.batch_size],volatile=true)            y,state = self.forward(x,train=false,state=state)            y_list.append(y.data[0]) #batch size = 1のみに対応        y = variable(np.array(y_list),volatile=false)        return self.output_func(y).data    def predict(self, x_data):        return self.predict_proba(x_data).argmax(1)```ほぼほぼ参照したコードを採用しています。ここまで書いてしまうとメイン処理は単純に書けて、```python:main.py# -*- coding: utf-8 -*-import pandas as pdimport numpy as npfrom dl_chainer import *import warningsfrom sklearn.metrics import classification_reportwarnings.filterwarnings(\"ignore\")i_file_excel=\"excelrand.csv\"i_file_r=\"rrandom.csv\"def main(file=\"\"):    \"\"\"    excelの乱数をrnnで学習して予測する    :return:    \"\"\"    df0 = pd.read_csv(file)    n = len(df0)    x_all = df0.iloc[:,0]    y_all = []    y_all.extend(x_all)    y_all.extend([np.nan])    y_all = y_all[1:(n+1)]    x_all_array = np.reshape(np.array(x_all[0:(n-1)],dtype=np.float32),(len(x_all)-1,1))/10    y_all_array = np.reshape(np.array(y_all[0:(n-1)],dtype=np.int32),(len(x_all)-1))    train_n = 2 * n/3    x_train = x_all_array[0:train_n]    y_train = y_all_array[0:train_n]    x_test = x_all_array[train_n:]    y_test = y_all_array[train_n:]    params = {\"input_dim\":1,\"hidden_dim\":100,\"n_classes\":10,\"dropout_ratio\":0.5,\"optsize\":30}    print params    print len(x_train),len(x_test)    rnn = rnnts(n_iter=200,report=1,**params)    rnn.fit(x_train,y_train)    pred = rnn.predict(x_train)    print classification_report(y_train,pred)    pred = rnn.predict(x_test)    print classification_report(y_test,pred)if __name__ == '__main__':    main(i_file_r)    main(i_file_excel)```基本は10クラス分類問題になります。#結果の評価結果の評価は難しいところです。少ないサンプル数のテストデータでは正しい評価ができないと考えられます。どちらの乱数列を使っても基本的にはrnnの学習は進みます。そこで、同一エポック数でどのようの学習速度が違うか、をみることにしました。つまり、同一エポックにおいて、より精度が出ている方は、データ内になんらかのパターンがあり、それを学習「されて」しまっている、と解釈します。乱数としてはパターンの存在はない方がいいので、この学習速度が遅い方が当然いい、というわけです。結果が以下、![精度.png](https://qiita-image-store.s3.amazonaws.com/0/54539/4c1c2ea7-ddd7-2247-322c-8bda1b9d4630.png \"精度.png\")excel側の方がrよりも学習速度が速いことがわかります。つまり、乱数の質的にはrの方が良いと見れるかな。本当は学習が進まない方がいいのだけど。#まとめ今回はrnnの練習のために、実装を試しに行ってみてexcelとrの乱数の学習を行いました。結果の評価方法が正しいかどうかは別にして、この評価方法だとexcel側の学習が速く進み、乱数としてはrの方が質がいいということがわかりました。たぶん、もっとちゃんと検証するには無数の乱数列が必要なのですが、計算機パワーの関係でこのくらいにしておきました。にしても、rnnで計算速度を上げるにはどうしたらいいのだろう・・・",
+    "coediting": false,
+    "created_at": "2016-09-11t17:34:20+09:00",
+    "group": null,
+    "id": "1e705e28e26f12cd0665",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "deeplearning",
+        "versions": []
+      },
+      {
+        "name": "chainer",
+        "versions": []
+      },
+      {
+        "name": "深層学習",
+        "versions": []
+      }
+    ],
+    "title": "chainerによるrecurrent neural network(rnn)のお勉強 〜excelとrの乱数の精度検証〜",
+    "updated_at": "2016-09-11t17:35:27+09:00",
+    "url": "http://qiita.com/wbh/items/1e705e28e26f12cd0665",
+    "user": {
+      "description": "",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 20,
+      "github_login_name": "hironishi",
+      "id": "wbh",
+      "items_count": 18,
+      "linkedin_id": "",
+      "location": "",
+      "name": "",
+      "organization": "",
+      "permanent_id": 54539,
+      "profile_image_url": "https://s3-ap-northeast-1.amazonaws.com/qiita-image-store/0/54539/71bd8cec5f3545ede88538f97e579796e98dee16/medium.png?1472555657",
+      "twitter_screen_name": null,
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "はじめにcloudwatch logsエージェントの中身を（途中まで）調べてみた の続きがきになる! ということで調べてみました。上のブログを読んだという前提で話を進めます。結論/var/awslogs/lib/python2.7/site-packages/cwlogs/push.pyが、監視対象のログを読み込み、cloudwatch logsのサービスにイベントをプッシュするコードでした。1800行くらいのコードです。慣れない自分には結構よむのつらいですが、主要な処理はこのコード内で完結しているので読めば動作がわかります。fileeventsreader._run(self) が実際にログを読みこむ部分ですこれから先は余談です。awscliにlogsのコードは含まれていないaws cliに含まれているんだということで、/usr/lib/python2.7/dist-packages/awscli  (awscliのインストール先ディレクトリ)https://github.com/aws/aws-cli  (awscliのgitリポジトリ)https://github.com/boto/boto3/  (awscliが使っているライブラリ)配下を散々さがしましたが、何もありませんでした。cloudwatch lgos agentの実行処理方向をかえてcloudwatch logs agent の実行時オプションに注目しました。/var/awslogs/bin/awslogs-agent-launcher.shをみると以下のようになっています。```/usr/bin/env -i \\https_proxy=$https_proxy \\http_proxy=$http_proxy \\no_proxy=$no_proxy \\aws_config_file=/var/awslogs/etc/aws.conf \\home=/root \\/bin/nice -n 4 \\/var/awslogs/bin/aws logs push \\--config-file /var/awslogs/etc/awslogs.conf \\--additional-configs-dir /var/awslogs/etc/config \\/var/log/awslogs.log 2&gt;&amp;1```設定を消しつつ実際にこのコマンドを実行したところ、以下があれば動作しましたaws_config_file=/var/awslogs/etc/aws.conf \\/var/awslogs/bin/aws logs push \\--config-file /var/awslogs/etc/awslogs.confaws_config_fileの中身をみると以下のようになっています。$ cat /var/awslogs/etc/aws.conf[plugins]cwlogs = cwlogs[default]region = us-west-2awscli プラグインおお。プラグイン！ ということでpythonのパッケージを探すと/var/awslogs/lib/python2.7/site-packages/cwlogsが存在していて、以下のようなファイルがありますfilter.py__init__.pykvstore.pyparser.pypull.pypush.pyretry.pythreads.pyutils.pyこの中でpush.pyとpull.pyがコマンドで残りはユーティリティクラスでした。pullの機能については根性がなくて調べていません。おわりにawscliはプラグインで機能を追加できるというのは初めて知りました。cwlogsを参考にプラグインを作るのもありかとおもいます。参考cloudwatch logsエージェントの中身を（途中まで）調べてみたcloudwatch logs agent の挙動について調べたことのまとめ",
+    "body": "#はじめに[cloudwatch logsエージェントの中身を（途中まで）調べてみた](https://moomindani.wordpress.com/2014/07/11/cloudwatch-logs-agent-inside/) の続きがきになる! ということで調べてみました。上のブログを読んだという前提で話を進めます。# 結論`/var/awslogs/lib/python2.7/site-packages/cwlogs/push.py`が、監視対象のログを読み込み、cloudwatch logsのサービスにイベントをプッシュするコードでした。1800行くらいのコードです。慣れない自分には結構よむのつらいですが、主要な処理はこのコード内で完結しているので読めば動作がわかります。`fileeventsreader._run(self)` が実際にログを読みこむ部分ですこれから先は余談です。# awscliにlogsのコードは含まれていないaws cliに含まれているんだということで、```/usr/lib/python2.7/dist-packages/awscli  (awscliのインストール先ディレクトリ)https://github.com/aws/aws-cli  (awscliのgitリポジトリ)https://github.com/boto/boto3/  (awscliが使っているライブラリ)```配下を散々さがしましたが、何もありませんでした。# cloudwatch lgos agentの実行処理方向をかえてcloudwatch logs agent の実行時オプションに注目しました。`/var/awslogs/bin/awslogs-agent-launcher.sh`をみると以下のようになっています。```/usr/bin/env -i \\https_proxy=$https_proxy \\http_proxy=$http_proxy \\no_proxy=$no_proxy \\aws_config_file=/var/awslogs/etc/aws.conf \\home=/root \\/bin/nice -n 4 \\/var/awslogs/bin/aws logs push \\--config-file /var/awslogs/etc/awslogs.conf \\--additional-configs-dir /var/awslogs/etc/config \\>> /var/log/awslogs.log 2>&1```設定を消しつつ実際にこのコマンドを実行したところ、以下があれば動作しました```aws_config_file=/var/awslogs/etc/aws.conf \\/var/awslogs/bin/aws logs push \\--config-file /var/awslogs/etc/awslogs.conf```aws_config_fileの中身をみると以下のようになっています。```$ cat /var/awslogs/etc/aws.conf[plugins]cwlogs = cwlogs[default]region = us-west-2```# awscli プラグインおお。プラグイン！ ということでpythonのパッケージを探すと`/var/awslogs/lib/python2.7/site-packages/cwlogs`が存在していて、以下のようなファイルがあります```filter.py__init__.pykvstore.pyparser.pypull.pypush.pyretry.pythreads.pyutils.py```この中で`push.py`と`pull.py`がコマンドで残りはユーティリティクラスでした。pullの機能については根性がなくて調べていません。# おわりにawscliはプラグインで機能を追加できるというのは初めて知りました。cwlogsを参考にプラグインを作るのもありかとおもいます。## 参考[cloudwatch logsエージェントの中身を（途中まで）調べてみた](https://moomindani.wordpress.com/2014/07/11/cloudwatch-logs-agent-inside/)[cloudwatch logs agent の挙動について調べたことのまとめ](http://qiita.com/szk3/items/dba1071fb9d344bcd48c)",
+    "coediting": false,
+    "created_at": "2016-09-11t15:55:10+09:00",
+    "group": null,
+    "id": "fb36a2e751e3dd8985fb",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "aws",
+        "versions": []
+      },
+      {
+        "name": "aws-cli",
+        "versions": []
+      },
+      {
+        "name": "cloudwatch-logs",
+        "versions": []
+      }
+    ],
+    "title": "cloudwatch logs agentの中身を探してみた",
+    "updated_at": "2016-09-11t15:55:10+09:00",
+    "url": "http://qiita.com/tt2004d/items/fb36a2e751e3dd8985fb",
+    "user": {
+      "description": "awsの構築の仕事をしています。",
+      "facebook_id": "",
+      "followees_count": 64,
+      "followers_count": 29,
+      "github_login_name": "takekawa",
+      "id": "tt2004d",
+      "items_count": 29,
+      "linkedin_id": "",
+      "location": "yokohama, kanagawa",
+      "name": "tsutomu takekawa",
+      "organization": "アイレット株式会社 cloudpack事業部",
+      "permanent_id": 51203,
+      "profile_image_url": "https://pbs.twimg.com/profile_images/378800000455272754/ba3fbef3c0ba93bdfcb156be35a0cb55_normal.jpeg",
+      "twitter_screen_name": "tt2004d",
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "ある関数を機械学習するのに必要十分な訓練データセットは何かという問題があります。sin関数のようなテイラー展開できる関数を考えた場合に、$n$次のテイラー展開と同精度を得るには、$n$点の訓練データがあれば必要十分と言えたらきれいだなと思い実験してみました。実際に試してみると、色々勘違いしていたことがわかりました。まずsin関数を近似しようとすると線形回帰では無理で、多項式フィッティングを行う必要があります。$n$次のテイラー展開と同様にということで、$n$次までの多項式を基底関数とした$n$次元の特徴ベクトルで線形回帰を行うわけですが、$n$個の基底関数に対する重みを求めるには$n$個の訓練データがあれば良いという訳で、最初に考えたことは当たり前の結果でした。また実際に試してみると$n$次のテイラー展開と多項式フィッティングの結果は一致せず、多項式フィッティングの方がずっと精度が良いようでした。これはテイラー展開の係数は$n\\rightarrow\\infty$の極限で適切な値となっているためではないかと思います。上図は$n=1, 3, \\dots ,15$でのsin関数のテイラー展開と多項式フィッティングの結果です。多項式フィッティングは与えられた次数の元で誤差が最小になるように係数を最適化しますから、テイラー展開より誤差が小さくなって当然かなと思います。上図は$n=1, 3, \\dots ,15$でのsin関数と、テイラー展開、多項式フィッティングによる近似の平均二乗誤差になります。多項式フィッティングの誤差が$n=15$で増えているのがちょっと気になりますが、多項式フィッティングの方がテイラー展開よりずっと誤差が少ないです。jupyter notebookへのリンク",
+    "body": "ある関数を機械学習するのに必要十分な訓練データセットは何かという問題があります。sin関数のようなテイラー展開できる関数を考えた場合に、$n$次のテイラー展開と同精度を得るには、$n$点の訓練データがあれば必要十分と言えたらきれいだなと思い実験してみました。実際に試してみると、色々勘違いしていたことがわかりました。まずsin関数を近似しようとすると線形回帰では無理で、多項式フィッティングを行う必要があります。$n$次のテイラー展開と同様にということで、$n$次までの多項式を基底関数とした$n$次元の特徴ベクトルで線形回帰を行うわけですが、$n$個の基底関数に対する重みを求めるには$n$個の訓練データがあれば良いという訳で、最初に考えたことは当たり前の結果でした。また実際に試してみると$n$次のテイラー展開と多項式フィッティングの結果は一致せず、多項式フィッティングの方がずっと精度が良いようでした。これはテイラー展開の係数は$n\\rightarrow\\infty$の極限で適切な値となっているためではないかと思います。![approx_sin.png](https://qiita-image-store.s3.amazonaws.com/0/114365/56432727-4b1c-7ad4-0e90-8e1a412fa9e5.png)上図は$n=1, 3, \\dots ,15$でのsin関数のテイラー展開と多項式フィッティングの結果です。多項式フィッティングは与えられた次数の元で誤差が最小になるように係数を最適化しますから、テイラー展開より誤差が小さくなって当然かなと思います。![approx_sin_mse.png](https://qiita-image-store.s3.amazonaws.com/0/114365/251cb6ff-3c15-6b7e-169e-3016b4beba00.png)上図は$n=1, 3, \\dots ,15$でのsin関数と、テイラー展開、多項式フィッティングによる近似の平均二乗誤差になります。多項式フィッティングの誤差が$n=15$で増えているのがちょっと気になりますが、多項式フィッティングの方がテイラー展開よりずっと誤差が少ないです。[jupyter notebookへのリンク](https://github.com/kibo35/idea/blob/master/sin.ipynb)",
+    "coediting": false,
+    "created_at": "2016-09-11t15:26:34+09:00",
+    "group": null,
+    "id": "c03167ac924d04653e65",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      }
+    ],
+    "title": "n次のテイラー展開と同精度のsin関数の近似を得るためにはn点の訓練データがあれば良いか？",
+    "updated_at": "2016-09-11t15:35:14+09:00",
+    "url": "http://qiita.com/kibo35/items/c03167ac924d04653e65",
+    "user": {
+      "description": "",
+      "facebook_id": "",
+      "followees_count": 0,
+      "followers_count": 0,
+      "github_login_name": "kibo35",
+      "id": "kibo35",
+      "items_count": 7,
+      "linkedin_id": "",
+      "location": "",
+      "name": "kibo35",
+      "organization": "",
+      "permanent_id": 114365,
+      "profile_image_url": "https://avatars.githubusercontent.com/u/12739939?v=3",
+      "twitter_screen_name": null,
+      "website_url": ""
+    }
+  },
+  {
+    "rendered_body": "はじめに報告書に以下のようなデータが記載されている。non-exceedanceprobbilityreturn period(years)peak discharge(m3/s)0.50    2 9500.80    516500.90   1021900.95   2027800.98   5036100.99  10043300.995 20050900.998 50061900.99910007090note: based on 2-parameter lognormal distribution.確率洪水流量は２変数対数正規分布で求めているようだ。このデータを用いて、以下のことを行ってみる事にする。10000年確率洪水流量を推定する２変数対数正規分布に従っているか確認するデータに対して外挿することになるが、限られた情報の中で、勘で数字を出しましたというよりはマシであろう。まあ、プログラムの練習なので、統計的な厳密さには目をつぶることにして欲しい。検討の流れ回帰分析の準備回帰分析の準備として，標準正規分布における非超過確率に対応するパーセント点，および流量の常用対数値を計算する．ppp=norm.ppf(pin, loc=0, scale=1)qqq=np.log10(qin)回帰分析次に目的変数を流量の対数値，説明変数を非超過確率のパーセント点として線形回帰を行ない、10000年確率に相当する洪水流量を推定するscipy: optimize.leastsqを用いた線形回帰による回帰係数，相関係数の算出parameter0 = [0.0,0.0]result = optimize.leastsq(func,parameter0,args=(ppp,qqq))aa=result[0][0]bb=result[0][1]rr=np.corrcoef(ppp,qqq)optimize.leastsqのための関数（イコール０となる形式で表現する）def func(parameter,x,y):    a = parameter[0]    b = parameter[1]    residual = y-(a*x+b)    return residual回帰結果を用いた1000年確率の推定pp=0.9999xq=norm.ppf(pp, loc=0, scale=1)qpp=10**(aa*xq+bb)対数正規確率紙へのプロット対数正規分布に従っているかどうかは、対数正規確率紙にプロットし、確認する。ここでは、グラフの横軸に洪水流量(対数値)、縦軸に確率値をプロットする。このため、デフォルトの軸目盛りは削除し、横軸、縦軸とも独自に設定する。軸目盛りおよび目盛り線の削除plt.tick_params(labelbottom='off')plt.tick_params(labelleft='off')plt.tick_params(which='both', width=0)グラフはpng画像として保存するが、qiitaなどに貼ることを考慮して、余白を削除しておく。plt.savefig('fig_flood_p.png', bbox_inches=\"tight\", pad_inches=0.2)プログラムpy_qq.pyimport numpy as npfrom scipy.stats import norm # normal distributionfrom scipy import optimizeimport matplotlib.pyplot as plt# function for optimize.leastsqdef func(parameter,x,y):    a = parameter[0]    b = parameter[1]    residual = y-(a*x+b)    return residual#==============================# data analysis#==============================# flood discharge dataqin=np.array([950,1650,2190,2780,3610,4330,5090,6190,7090])# non-exceedance probability datapin=np.array([0.50,0.80,0.90,0.95,0.98,0.99,0.995,0.998,0.999])ppp=norm.ppf(pin, loc=0, scale=1)qqq=np.log10(qin)# least square methodparameter0 = [0.0,0.0]result = optimize.leastsq(func,parameter0,args=(ppp,qqq))aa=result[0][0]bb=result[0][1]rr=np.corrcoef(ppp,qqq)# estimation of 10,000 years return period floodpp=0.9999xq=norm.ppf(pp, loc=0, scale=1)qpp=10**(aa*xq+bb)print('log10(q) = a * x + b')print('a={aa:10.6f} b={bb:10.6f} r={rr[0][1]:10.6f}'.format(**locals()))print('q={qpp:10.3f} (pp={pp:0.4f})'.format(**locals()))#==============================# plot by matplotlib#==============================fig = plt.figure(figsize=(7,8))xmin=np.log10(100)xmax=np.log10(20000)ymin=norm.ppf(0.0001, loc=0, scale=1)ymax=norm.ppf(0.9999, loc=0, scale=1)plt.xlim([xmin,xmax])plt.ylim([ymin,ymax])plt.tick_params(labelbottom='off')plt.tick_params(labelleft='off')plt.tick_params(which='both', width=0)# data plotplt.plot(qqq,ppp,'o')# straight line by regression analysisplt.plot([xmin, xmax], [(xmin-bb)/aa, (xmax-bb)/aa], color='k', linestyle='-', linewidth=1)# setting of x-y axes_dy=np.array([0.0001,0.001,0.01,0.1,0.5,0.9,0.99,0.999,0.9999])dy=norm.ppf(_dy, loc=0, scale=1)plt.hlines(dy, xmin, xmax, color='grey')_dx=np.array([100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,20000])dx=np.log10(_dx)plt.vlines(dx, ymin, ymax, color='grey')fs=16for i in range(2,5):    plt.text(float(i), ymin-0.1, str(10**i), ha = 'center', va = 'top', fontsize=fs)for i in range(0,9):    plt.text(xmin-0.01, dy[i], str(_dy[i]), ha = 'right', va = 'center', fontsize=fs)plt.text(0.5*(xmin+xmax), ymin-0.5, 'flood discharge (m$^3$/s)', ha = 'center', va = 'center', fontsize=fs)plt.text(xmin-0.25,0.5*(ymin+ymax),'non-exceedance probability', ha = 'center', va = 'center', fontsize=fs, rotation=90)# image saving and image showingplt.savefig('fig_flood_p.png', bbox_inches=\"tight\", pad_inches=0.2)plt.show()出力結果$ python3 py_qq.pylog10(q) = a * x + ba=  0.282460 b=  2.978647 r=  0.999996q= 10693.521 (pp=0.9999)参考サイトscipyの統計関数http://kaisk.hatenadiary.com/entry/2015/02/17/192955scipyによる線形回帰事例http://www2.kaiyodai.ac.jp/~kentaro/materials/new_hp/python/15fit_data3.htmlmatplotlibで画像の余白を削除するhttps://mzmttks.blogspot.my/2012/01/pylab-2.html",
+    "body": "#はじめに報告書に以下のようなデータが記載されている。non-exceedanceprobbilityreturn period(years)peak discharge(m3/s)0.50    2 9500.80    516500.90   1021900.95   2027800.98   5036100.99  10043300.995 20050900.998 50061900.99910007090note: based on 2-parameter lognormal distribution.確率洪水流量は２変数対数正規分布で求めているようだ。このデータを用いて、以下のことを行ってみる事にする。+ 10000年確率洪水流量を推定する+ ２変数対数正規分布に従っているか確認するデータに対して外挿することになるが、限られた情報の中で、勘で数字を出しましたというよりはマシであろう。まあ、プログラムの練習なので、統計的な厳密さには目をつぶることにして欲しい。#検討の流れ###回帰分析の準備回帰分析の準備として，標準正規分布における非超過確率に対応するパーセント点，および流量の常用対数値を計算する．```ppp=norm.ppf(pin, loc=0, scale=1)qqq=np.log10(qin)```###回帰分析次に目的変数を流量の対数値，説明変数を非超過確率のパーセント点として線形回帰を行ない、10000年確率に相当する洪水流量を推定するscipy: optimize.leastsqを用いた線形回帰による回帰係数，相関係数の算出```parameter0 = [0.0,0.0]result = optimize.leastsq(func,parameter0,args=(ppp,qqq))aa=result[0][0]bb=result[0][1]rr=np.corrcoef(ppp,qqq)```optimize.leastsqのための関数（イコール０となる形式で表現する）```def func(parameter,x,y):    a = parameter[0]    b = parameter[1]    residual = y-(a*x+b)    return residual```回帰結果を用いた1000年確率の推定```pp=0.9999xq=norm.ppf(pp, loc=0, scale=1)qpp=10**(aa*xq+bb)```###対数正規確率紙へのプロット対数正規分布に従っているかどうかは、対数正規確率紙にプロットし、確認する。ここでは、グラフの横軸に洪水流量(対数値)、縦軸に確率値をプロットする。このため、デフォルトの軸目盛りは削除し、横軸、縦軸とも独自に設定する。軸目盛りおよび目盛り線の削除```plt.tick_params(labelbottom='off')plt.tick_params(labelleft='off')plt.tick_params(which='both', width=0)```グラフはpng画像として保存するが、qiitaなどに貼ることを考慮して、余白を削除しておく。```plt.savefig('fig_flood_p.png', bbox_inches=\"tight\", pad_inches=0.2)```#プログラム```python:py_qq.pyimport numpy as npfrom scipy.stats import norm # normal distributionfrom scipy import optimizeimport matplotlib.pyplot as plt# function for optimize.leastsqdef func(parameter,x,y):    a = parameter[0]    b = parameter[1]    residual = y-(a*x+b)    return residual#==============================# data analysis#==============================# flood discharge dataqin=np.array([950,1650,2190,2780,3610,4330,5090,6190,7090])# non-exceedance probability datapin=np.array([0.50,0.80,0.90,0.95,0.98,0.99,0.995,0.998,0.999])ppp=norm.ppf(pin, loc=0, scale=1)qqq=np.log10(qin)# least square methodparameter0 = [0.0,0.0]result = optimize.leastsq(func,parameter0,args=(ppp,qqq))aa=result[0][0]bb=result[0][1]rr=np.corrcoef(ppp,qqq)# estimation of 10,000 years return period floodpp=0.9999xq=norm.ppf(pp, loc=0, scale=1)qpp=10**(aa*xq+bb)print('log10(q) = a * x + b')print('a={aa:10.6f} b={bb:10.6f} r={rr[0][1]:10.6f}'.format(**locals()))print('q={qpp:10.3f} (pp={pp:0.4f})'.format(**locals()))#==============================# plot by matplotlib#==============================fig = plt.figure(figsize=(7,8))xmin=np.log10(100)xmax=np.log10(20000)ymin=norm.ppf(0.0001, loc=0, scale=1)ymax=norm.ppf(0.9999, loc=0, scale=1)plt.xlim([xmin,xmax])plt.ylim([ymin,ymax])plt.tick_params(labelbottom='off')plt.tick_params(labelleft='off')plt.tick_params(which='both', width=0)# data plotplt.plot(qqq,ppp,'o')# straight line by regression analysisplt.plot([xmin, xmax], [(xmin-bb)/aa, (xmax-bb)/aa], color='k', linestyle='-', linewidth=1)# setting of x-y axes_dy=np.array([0.0001,0.001,0.01,0.1,0.5,0.9,0.99,0.999,0.9999])dy=norm.ppf(_dy, loc=0, scale=1)plt.hlines(dy, xmin, xmax, color='grey')_dx=np.array([100,200,300,400,500,600,700,800,900,1000,2000,3000,4000,5000,6000,7000,8000,9000,10000,20000])dx=np.log10(_dx)plt.vlines(dx, ymin, ymax, color='grey')fs=16for i in range(2,5):    plt.text(float(i), ymin-0.1, str(10**i), ha = 'center', va = 'top', fontsize=fs)for i in range(0,9):    plt.text(xmin-0.01, dy[i], str(_dy[i]), ha = 'right', va = 'center', fontsize=fs)plt.text(0.5*(xmin+xmax), ymin-0.5, 'flood discharge (m$^3$/s)', ha = 'center', va = 'center', fontsize=fs)plt.text(xmin-0.25,0.5*(ymin+ymax),'non-exceedance probability', ha = 'center', va = 'center', fontsize=fs, rotation=90)# image saving and image showingplt.savefig('fig_flood_p.png', bbox_inches=\"tight\", pad_inches=0.2)plt.show()```#出力結果```$ python3 py_qq.pylog10(q) = a * x + ba=  0.282460 b=  2.978647 r=  0.999996q= 10693.521 (pp=0.9999)```![fig_flood_p.png](https://qiita-image-store.s3.amazonaws.com/0/129300/9ece9855-c9c2-34e0-e68c-81e2364e4cb5.png)# 参考サイトscipyの統計関数[http://kaisk.hatenadiary.com/entry/2015/02/17/192955](http://kaisk.hatenadiary.com/entry/2015/02/17/192955)scipyによる線形回帰事例[http://www2.kaiyodai.ac.jp/~kentaro/materials/new_hp/python/15fit_data3.html](http://www2.kaiyodai.ac.jp/~kentaro/materials/new_hp/python/15fit_data3.html)matplotlibで画像の余白を削除する[https://mzmttks.blogspot.my/2012/01/pylab-2.html](https://mzmttks.blogspot.my/2012/01/pylab-2.html)",
+    "coediting": false,
+    "created_at": "2016-09-11t14:40:10+09:00",
+    "group": null,
+    "id": "e152d1c601ad622446b4",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "matplotlib",
+        "versions": []
+      },
+      {
+        "name": "対数正規確率紙",
+        "versions": []
+      }
+    ],
+    "title": "python-matplotlibにより対数正規確率プロットを行う",
+    "updated_at": "2016-09-12t09:29:50+09:00",
+    "url": "http://qiita.com/damyarou/items/e152d1c601ad622446b4",
+    "user": {
+      "description": null,
+      "facebook_id": null,
+      "followees_count": 0,
+      "followers_count": 6,
+      "github_login_name": null,
+      "id": "damyarou",
+      "items_count": 17,
+      "linkedin_id": null,
+      "location": null,
+      "name": "",
+      "organization": null,
+      "permanent_id": 129300,
+      "profile_image_url": "https://s3-ap-northeast-1.amazonaws.com/qiita-image-store/0/129300/ea0d2ea2ccecfc224ed391b1819174fb65656a04/medium.png?1471151653",
+      "twitter_screen_name": null,
+      "website_url": null
+    }
+  },
+  {
+    "rendered_body": "注意適当に調べたので，間違っているところがあるかもしれない．tl;drsageあるいはsagemathとは，pythonを拡張して実装された計算代数システムの一つで，mathematicaのフリー版代替を目指して様々なオープンソースソフトウェアとして公開されている計算代数ライブラリを統合した開発環境でもある．対象の構造と独自の定義数学で扱われる対象の構造は，プログラミング言語で扱う型の構造(例えば継承と派生．これ以外にも色々と構造があったりするので，十分複雑だけれども…)よりも複雑なので，これを取り扱うためにsageでは独自の型変換機構(cercion system)を実装している．そのため，独自に新しい対象を定義したい場合は，この実装のルールに従って定義すると，型変換機構の恩恵を受けることができる．sageはpythonの拡張なので，もちろんpython言語として実装してもよい．この場合はsageの型変換機構の恩恵を受けることはできない．parentとelement簡単に言って，全ての対象は基本的にelementクラスから派生したクラスのインスタンスとして扱われる．また，集合や群，体など，型の概念に対応する何らかの集合があり，この集合から要素を取り出す(生成する)といった場合には，parentクラスの派生クラスとelementクラスの派生クラスを関連付けることで，この関係を実装する．sageでは，一定のルールに従ってコードを記述することにより，sageにおける型変換機構を利用しつつ独自の対象を実装することができる．categorytodo: 未調査．サンプルコードサンプルコードを適当に書いてみた．参考文献how to implement new algebraic structures in sage — thematic tutorials v7.3coercion — sage reference manual v7.3: coercion",
+    "body": "## 注意適当に調べたので，間違っているところがあるかもしれない．# tl;dr[sageあるいはsagemath](http://www.sagemath.org/ \"sagemath - open-source mathematical software system\")とは，pythonを拡張して実装された計算代数システムの一つで，mathematicaのフリー版代替を目指して様々なオープンソースソフトウェアとして公開されている計算代数ライブラリを統合した開発環境でもある．# 対象の構造と独自の定義数学で扱われる対象の構造は，プログラミング言語で扱う型の構造(例えば継承と派生．これ以外にも色々と構造があったりするので，十分複雑だけれども…)よりも複雑なので，これを取り扱うためにsageでは独自の型変換機構(cercion system)を実装している．そのため，独自に新しい対象を定義したい場合は，この実装のルールに従って定義すると，型変換機構の恩恵を受けることができる．sageはpythonの拡張なので，もちろんpython言語として実装してもよい．この場合はsageの型変換機構の恩恵を受けることはできない．## parentとelement簡単に言って，全ての対象は基本的にelementクラスから派生したクラスのインスタンスとして扱われる．また，集合や群，体など，型の概念に対応する何らかの集合があり，この集合から要素を取り出す(生成する)といった場合には，parentクラスの派生クラスとelementクラスの派生クラスを関連付けることで，この関係を実装する．sageでは，一定のルールに従ってコードを記述することにより，sageにおける型変換機構を利用しつつ独自の対象を実装することができる．## categorytodo: 未調査．# サンプルコード* [サンプルコード](https://gist.github.com/tell/ce221859440994a62234f1038eaa5b85)を適当に書いてみた．# 参考文献* [how to implement new algebraic structures in sage — thematic tutorials v7.3](http://doc.sagemath.org/html/en/thematic_tutorials/coercion_and_categories.html#coercion-and-categories \"how to implement new algebraic structures in sage — thematic tutorials v7.3\")* [coercion — sage reference manual v7.3: coercion](http://doc.sagemath.org/html/en/reference/coercion/index.html \"coercion — sage reference manual v7.3: coercion\")",
+    "coediting": false,
+    "created_at": "2016-09-10t23:49:53+09:00",
+    "group": null,
+    "id": "6f14f4f8b09323763b8e",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "sage",
+        "versions": []
+      },
+      {
+        "name": "sagemath",
+        "versions": []
+      }
+    ],
+    "title": "sageで独自の対象を定義する方法",
+    "updated_at": "2016-09-12t00:30:10+09:00",
+    "url": "http://qiita.com/tell/items/6f14f4f8b09323763b8e",
+    "user": {
+      "description": null,
+      "facebook_id": null,
+      "followees_count": 92,
+      "followers_count": 19,
+      "github_login_name": "tell",
+      "id": "tell",
+      "items_count": 12,
+      "linkedin_id": null,
+      "location": null,
+      "name": "",
+      "organization": null,
+      "permanent_id": 14991,
+      "profile_image_url": "https://qiita-image-store.s3.amazonaws.com/0/14991/profile-images/1473683601",
+      "twitter_screen_name": null,
+      "website_url": null
+    }
+  },
+  {
+    "rendered_body": "complex value sortとでも呼んでおく(これ何ソート？)指定する辞書のvalueが構造を持つケース複雑な辞書のvalueの中のどこかの値でkey以下の構造をソートする。key以下の構造を維持する形でソートする。指定の値が文字列か数値かには注意する。（\"\"やnoneは、事前に弾くか0にでもしておく）例えば、こんな辞書構造があってadic = {　　　　　　　　　　　　　　 　                   ↓こことか　　　　　         ↓ここを軸にソートしたい            'c134':{\"price\":30,\"sales\":\"1000\",\"profit\":200 ,\"alist\":[110,20,30 ,50]},             'c623':{\"price\":80,\"sales\":\"100\" ,\"profit\":6   ,\"alist\":[100,10,30 ,50]},            'c430':{\"price\":70,\"sales\":\"5000\",\"profit\":1000,\"alist\":[160,11,120,6]},            'c115':{\"price\":10,\"sales\":\"2400\",\"profit\":40  ,\"alist\":[80 , 1,10 ,6]}        }ポイントはラムダ式の返り値の表現sorted()でvalue構造内のソートしたい値を指定する（この場合x[1]が内側の辞書型になる）。　key = lambda x: x[1]['profit']指定したい値がより深い所にある場合たどる必要がある(x[1]['alist']がリストに相当、その２番目を指定)　key = lambda x: x[1]['alist'][1]基本はコレdic = {'a':10000, 'b':2010, 'c':5, 'd':500}res = sorted(dic.items(), key=lambda x: x[1])　#value指定ラムダは関数の略と思えば読める。def lambda(x): return 2x --&gt;  lambda x:2xdict型は、xに(key,value)タプルが飛び込んでくるので0番か1番か指定している。import collectionsfrom prettyprint import pp, pp_str #ppはお好みのでどうぞ最近は公式のがあったはずfrom collections import ordereddictadic = {            #この４列をvalue内のどこかのvalue値でソートする            'c134':{\"price\":30,\"sales\":\"1000\",\"profit\":200 ,\"alist\":[110,20,30,50]},             'c623':{\"price\":80,\"sales\":\"100\" ,\"profit\":6   ,\"alist\":[100,10,30,50]},            'c430':{\"price\":70,\"sales\":\"5000\",\"profit\":1000,\"alist\":[160,11,120,6]},            'c115':{\"price\":10,\"sales\":\"2400\",\"profit\":40  ,\"alist\":[80,1,10,6]}        }# xには辞書から出てきたタプルが入ってくる感じ。タプルの中をたどってvalue指定# listで返るので注意#　全部降順指定:reverse=truepp('profitでソート')res1 = sorted(adic.items(), key=lambda x: x[1]['profit'],reverse=true)pp(res1)pp('salesでソート（文字列はintに変換）')res2 = sorted(adic.items(), key=lambda x: int(x[1]['sales']),reverse=true)pp(res2)pp('alistの２個めでソート')res3 = sorted(adic.items(), key=lambda x: x[1]['alist'][1],reverse=true)pp(res3)pp('key sort（バックから３つで数字を抜く。３ケタとか固定の場合）')res4 = sorted(adic.items(), key=lambda x: int (x[0][-3]) ,reverse=true)#int なくても一応どうにかなるpp(res4)pp('key sort（先頭の文字\"c\"をカット）')res5 = sorted(adic.items(), key=lambda x: int(x[0].lstrip('c')) ,reverse=true)pp(res5)pp('profitでソート2')res6 = ordereddict(sorted(adic.items(), key=lambda x: x[1]['profit'],reverse=true))print(res6)#ppだと中で順序がくずれる。pp(type(res6))結果　profitのケースだけとりあえず貼ります。profitの値、1000, 200, 40, 6で降順に構造ごとソートできている！key的には、c430, c134, c115, c623の構造順になっている。ordereddictは、古テクのppと相性が悪い。\"profitでソート\"[    [        \"c430\",         {            \"alist\": [                160,                 11,                 120,                 6            ],             \"price\": 70,             \"profit\": 1000,             \"sales\": \"5000\"        }    ],     [        \"c134\",         {            \"alist\": [                110,                 20,                 30,                 50            ],             \"price\": 30,             \"profit\": 200,             \"sales\": \"1000\"        }    ],     [        \"c115\",         {            \"alist\": [                80,                 1,                 10,                 6            ],             \"price\": 10,             \"profit\": 40,             \"sales\": \"2400\"        }    ],     [        \"c623\",         {            \"alist\": [                100,                 10,                 30,                 50            ],             \"price\": 80,             \"profit\": 6,             \"sales\": \"100\"        }    ]]*最初、python3.5で作ったが、upの際の確認時はpython2.7*クォート統一してなくてすんません。#備考#ラムダ式と関数の関係def func(x):    return x ** 2func = lambda x: x ** 2func(2) #4#string処理string.strip()#全部　空白　改行　削除string.strip(\"\\\r\")#両端でヒットするもの削除string.rstrip(\"\\\r\")#ケツでヒットするもの削除",
+    "body": "## complex value sortとでも呼んでおく(これ何ソート？)- 指定する辞書のvalueが構造を持つケース- 複雑な辞書のvalueの中のどこかの値でkey以下の構造をソートする。- key以下の構造を維持する形でソートする。- 指定の値が文字列か数値かには注意する。（\"\"やnoneは、事前に弾くか0にでもしておく）例えば、こんな辞書構造があって```adic = {　　　　　　　　　　　　　　 　                   ↓こことか　　　　　         ↓ここを軸にソートしたい            'c134':{\"price\":30,\"sales\":\"1000\",\"profit\":200 ,\"alist\":[110,20,30 ,50]},             'c623':{\"price\":80,\"sales\":\"100\" ,\"profit\":6   ,\"alist\":[100,10,30 ,50]},            'c430':{\"price\":70,\"sales\":\"5000\",\"profit\":1000,\"alist\":[160,11,120,6]},            'c115':{\"price\":10,\"sales\":\"2400\",\"profit\":40  ,\"alist\":[80 , 1,10 ,6]}        }```##ポイントはラムダ式の返り値の表現sorted()でvalue構造内のソートしたい値を指定する（この場合x[1]が内側の辞書型になる）。　key = lambda x: x[1]['profit']指定したい値がより深い所にある場合たどる必要がある(x[1]['alist']がリストに相当、その２番目を指定)　key = lambda x: x[1]['alist'][1]##基本はコレdic = {'a':10000, 'b':2010, 'c':5, 'd':500}res = sorted(dic.items(), key=lambda x: x[1])　#value指定##ラムダは関数の略と思えば読める。def lambda(x): return 2x -->  lambda x:2xdict型は、xに(key,value)タプルが飛び込んでくるので0番か1番か指定している。```pyimport collectionsfrom prettyprint import pp, pp_str #ppはお好みのでどうぞ最近は公式のがあったはずfrom collections import ordereddictadic = {            #この４列をvalue内のどこかのvalue値でソートする            'c134':{\"price\":30,\"sales\":\"1000\",\"profit\":200 ,\"alist\":[110,20,30,50]},             'c623':{\"price\":80,\"sales\":\"100\" ,\"profit\":6   ,\"alist\":[100,10,30,50]},            'c430':{\"price\":70,\"sales\":\"5000\",\"profit\":1000,\"alist\":[160,11,120,6]},            'c115':{\"price\":10,\"sales\":\"2400\",\"profit\":40  ,\"alist\":[80,1,10,6]}        }# xには辞書から出てきたタプルが入ってくる感じ。タプルの中をたどってvalue指定# listで返るので注意#　全部降順指定:reverse=truepp('profitでソート')res1 = sorted(adic.items(), key=lambda x: x[1]['profit'],reverse=true)pp(res1)pp('salesでソート（文字列はintに変換）')res2 = sorted(adic.items(), key=lambda x: int(x[1]['sales']),reverse=true)pp(res2)pp('alistの２個めでソート')res3 = sorted(adic.items(), key=lambda x: x[1]['alist'][1],reverse=true)pp(res3)pp('key sort（バックから３つで数字を抜く。３ケタとか固定の場合）')res4 = sorted(adic.items(), key=lambda x: int (x[0][-3]) ,reverse=true)#int なくても一応どうにかなるpp(res4)pp('key sort（先頭の文字\"c\"をカット）')res5 = sorted(adic.items(), key=lambda x: int(x[0].lstrip('c')) ,reverse=true)pp(res5)pp('profitでソート2')res6 = ordereddict(sorted(adic.items(), key=lambda x: x[1]['profit'],reverse=true))print(res6)#ppだと中で順序がくずれる。pp(type(res6))```#結果　profitのケースだけとりあえず貼ります。profitの値、1000, 200, 40, 6で降順に構造ごとソートできている！key的には、c430, c134, c115, c623の構造順になっている。*ordereddictは、古テクのppと相性が悪い。*```py\"profitでソート\"[    [        \"c430\",         {            \"alist\": [                160,                 11,                 120,                 6            ],             \"price\": 70,             \"profit\": 1000,             \"sales\": \"5000\"        }    ],     [        \"c134\",         {            \"alist\": [                110,                 20,                 30,                 50            ],             \"price\": 30,             \"profit\": 200,             \"sales\": \"1000\"        }    ],     [        \"c115\",         {            \"alist\": [                80,                 1,                 10,                 6            ],             \"price\": 10,             \"profit\": 40,             \"sales\": \"2400\"        }    ],     [        \"c623\",         {            \"alist\": [                100,                 10,                 30,                 50            ],             \"price\": 80,             \"profit\": 6,             \"sales\": \"100\"        }    ]]```*最初、python3.5で作ったが、upの際の確認時はpython2.7*クォート統一してなくてすんません。```py #備考#ラムダ式と関数の関係def func(x):    return x ** 2func = lambda x: x ** 2func(2) #4#string処理string.strip()#全部　空白　改行　削除string.strip(\"\\\r\")#両端でヒットするもの削除string.rstrip(\"\\\r\")#ケツでヒットするもの削除```",
+    "coediting": false,
+    "created_at": "2016-09-10t05:09:57+09:00",
+    "group": null,
+    "id": "787cac6a55ecfff13dc0",
+    "private": false,
+    "tags": [
+      {
+        "name": "python",
+        "versions": []
+      },
+      {
+        "name": "python3",
+        "versions": []
+      },
+      {
+        "name": "python2.7",
+        "versions": []
+      },
+      {
+        "name": ",",
+        "versions": []
+      }
+    ],
+    "title": "複雑な構造を持つ辞書のvalueソート（深いところのvalueでkey構造ごとソート）",
+    "updated_at": "2016-09-11t09:51:24+09:00",
+    "url": "http://qiita.com/zaoriku0/items/787cac6a55ecfff13dc0",
+    "user": {
+      "description": "言語：\rjava, android, python, perl, php, cakephp, c#, c , アセンブラ, basic, r, octave,  maple, \rテーマ：\rテキストマイニング, nlp, 機械学習, mas, 市場予測, gameプログラミング\r\rhatenaアカ： zaoriku\r",
+      "facebook_id": "",
+      "followees_count": 412,
+      "followers_count": 76,
+      "github_login_name": null,
+      "id": "zaoriku0",
+      "items_count": 15,
+      "linkedin_id": "",
+      "location": "",
+      "name": "tyee z",
+      "organization": "",
+      "permanent_id": 7438,
+      "profile_image_url": "https://qiita-image-store.s3.amazonaws.com/0/7438/profile-images/1473684178",
+      "twitter_screen_name": "zaoriku0",
+      "website_url": ""
+    }
+  }
+]
