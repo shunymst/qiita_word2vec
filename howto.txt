@@ -1,0 +1,5 @@
+study (only once):
+ #python word2vec.py
+
+check (per 1 word):
+ #python similarWords.py IoT
