@@ -1,9 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+
 import sys
 param = sys.argv
 keyword = str(param[1]).lower()#komoji ni suru noda!
 input = "word2vec.data"
+
+paramLen = len(param)
+if (paramLen == 3):
+    input = str(param[2]) #input exist check
+
 
 from gensim.models import word2vec
 import logging
